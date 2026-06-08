@@ -1,0 +1,22 @@
+[
+  {"query": "Port the legacy share_video analytics event to our new app — the event name and props must match the old one exactly. Plan first, then have codex verify before I implement.", "should_trigger": true},
+  {"query": "I'm changing the signup_conversion SQL to read from the orders table; if it's wrong the whole dashboard breaks. Do it with a gate, don't just write it all and ship.", "should_trigger": true},
+  {"query": "走驗證流程, add the platform normalization to the subscription repository.", "should_trigger": true},
+  {"query": "Move the old pricing calculation logic into the new service layer — it has to match the original exactly. Have codex check the plan first.", "should_trigger": true},
+  {"query": "I need to run a migration adding a country column to the snapshots table — big blast radius. I want an independent check before it goes out.", "should_trigger": true},
+  {"query": "plan then codex then exec — rebuild the funnel-by-source query, the logic has to match the source-of-truth table.", "should_trigger": true},
+  {"query": "This changes production billing logic, and a mistake undercharges customers. Can we do the kind where the plan gets verified and the result gets verified?", "should_trigger": true},
+  {"query": "I want to switch the trial conversion source from the frozen mirror table to the real orders table — scared of wiring it wrong again. Plan first, then codex verifies it against the ground truth.", "should_trigger": true},
+  {"query": "double check both my plan and the implementation against the legacy code before i ship this, its a payment refund flow so it has to be exactly right", "should_trigger": true},
+  {"query": "what is codex exec and how is it different from claude code", "should_trigger": false},
+  {"query": "show me last week's signup conversion vs the week before", "should_trigger": false},
+  {"query": "run a code review on this diff and find bugs", "should_trigger": false},
+  {"query": "verify this PR actually runs — open the app and click through the real behavior", "should_trigger": false},
+  {"query": "audit the numbers in this finance_report.html, are they correct", "should_trigger": false},
+  {"query": "why does this function keep returning None, help me debug it", "should_trigger": false},
+  {"query": "quickly write a throwaway script to convert this csv to json, nothing fancy", "should_trigger": false},
+  {"query": "just write a plan doc for this change, don't touch the code yet", "should_trigger": false},
+  {"query": "change the homepage button color from blue to green", "should_trigger": false},
+  {"query": "explain what byte-identical means and why analytics events need it", "should_trigger": false},
+  {"query": "help me install and set up codex", "should_trigger": false}
+]
