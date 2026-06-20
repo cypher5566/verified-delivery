@@ -49,15 +49,18 @@ whether it's live or only committed.
 ## codex, mechanically
 This skill uses [codex](https://github.com/openai/codex) as the independent verifier.
 Make sure it's installed and authenticated first. Run it from a dir containing **both**
-the SSOT and the target, read-only. Force `model_reasoning_effort="high"` — independent
-verification is the whole point, so give it max reasoning; don't pin `-m` (inherit your
-default codex model):
+the SSOT and the target, read-only — that dir is often a non-git common parent (e.g. when
+the SSOT and target live in different repos/locations), so pass **`--skip-git-repo-check`**
+(codex otherwise aborts with "Not inside a trusted directory") and redirect **`< /dev/null`**
+(else codex blocks on "Reading additional input from stdin…" when backgrounded). Force
+`model_reasoning_effort="high"` — independent verification is the whole point, so give it max
+reasoning; don't pin `-m` (inherit your default codex model):
 ```bash
-cd <dir-with-both> && codex exec --sandbox read-only \
+cd <dir-with-both> && codex exec --sandbox read-only --skip-git-repo-check \
   -c model_reasoning_effort="high" \
   "Verify each of these against <SSOT path/table> and the working tree, \
    reporting TRUE/FALSE/PARTIAL + a file:line (or table:column) citation: \
-   <paste the uncertain-points list, or 'read <plan path>'>. Read-only. Be concise."
+   <paste the uncertain-points list, or 'read <plan path>'>. Read-only. Be concise." < /dev/null
 ```
 `codex exec` **buffers all output until it finishes** (the file reads 0 bytes mid-run
 — normal). Run it in the background, then poll until it grows:
