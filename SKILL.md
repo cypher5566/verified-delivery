@@ -52,22 +52,28 @@ Make sure it's installed and authenticated first. Run it from a dir containing *
 the SSOT and the target, read-only — that dir is often a non-git common parent (e.g. when
 the SSOT and target live in different repos/locations), so pass **`--skip-git-repo-check`**
 (codex otherwise aborts with "Not inside a trusted directory") and redirect **`< /dev/null`**
-(else codex blocks on "Reading additional input from stdin…" when backgrounded). Force
+(else codex blocks on "Reading additional input from stdin…" when backgrounded), and bound it
+with a portable hard timeout — **`perl -e 'alarm shift; exec @ARGV' 600`** (macOS ships no
+`timeout`/`gtimeout`, but perl's `alarm` survives `exec`). Force
 `model_reasoning_effort="high"` — independent verification is the whole point, so give it max
 reasoning; don't pin `-m` (inherit your default codex model):
 ```bash
-cd <dir-with-both> && codex exec --sandbox read-only --skip-git-repo-check \
+cd <dir-with-both> && perl -e 'alarm shift; exec @ARGV' 600 \
+  codex exec --sandbox read-only --skip-git-repo-check \
   -c model_reasoning_effort="high" \
   "Verify each of these against <SSOT path/table> and the working tree, \
    reporting TRUE/FALSE/PARTIAL + a file:line (or table:column) citation: \
-   <paste the uncertain-points list, or 'read <plan path>'>. Read-only. Be concise." < /dev/null
+   <paste the uncertain-points list, or 'read <plan path>'>. Read-only. Be concise." \
+  < /dev/null > <output-file> 2>&1; echo "EXIT=$?"
 ```
 `codex exec` **buffers all output until it finishes** (the file reads 0 bytes mid-run
 — normal). Run it in the background, then poll until it grows:
 ```bash
 f=<output-file>; until [ "$(wc -c < "$f" 2>/dev/null || echo 0)" -gt 120 ]; do sleep 5; done; cat "$f"
 ```
-A 0-byte file + nonzero exit is usually a blocked telemetry write, not a failed
-analysis — re-run foreground with a shorter prompt if it truly wedges. (Don't wrap the
-command in `timeout` — macOS ships neither `timeout` nor `gtimeout`; running codex in
-the background already bounds it. On Linux/CI you can prepend `timeout 560` if you want.)
+A 0-byte file + nonzero exit is usually a blocked telemetry write, not a failed analysis —
+re-run with a shorter prompt if it truly wedges. The hard timeout above is **not optional**:
+without it a wedged codex hangs forever and "still working" is indistinguishable from "dead" —
+the runtime only signals on *completion*, which a hang denies, so "running in the background
+already bounds it" is FALSE. `EXIT=142` = the timeout fired (shorten the prompt or retry);
+output stuck tiny on "Reading additional input from stdin…" = the `< /dev/null` was dropped.
