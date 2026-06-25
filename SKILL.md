@@ -52,7 +52,8 @@ Make sure it's installed and authenticated first. Run it from a dir containing *
 the SSOT and the target, read-only — that dir is often a non-git common parent (e.g. when
 the SSOT and target live in different repos/locations), so pass **`--skip-git-repo-check`**
 (codex otherwise aborts with "Not inside a trusted directory") and redirect **`< /dev/null`**
-(else codex blocks on "Reading additional input from stdin…" when backgrounded), and bound it
+(else codex blocks on "Reading additional input from stdin…" — see **Non-TTY subprocesses**
+below), and bound it
 with a portable hard timeout — **`perl -e 'alarm shift; exec @ARGV' 600`** (macOS ships no
 `timeout`/`gtimeout`, but perl's `alarm` survives `exec`). Force
 `model_reasoning_effort="high"` — independent verification is the whole point, so give it max
@@ -77,3 +78,13 @@ without it a wedged codex hangs forever and "still working" is indistinguishable
 the runtime only signals on *completion*, which a hang denies, so "running in the background
 already bounds it" is FALSE. `EXIT=142` = the timeout fired (shorten the prompt or retry);
 output stuck tiny on "Reading additional input from stdin…" = the `< /dev/null` was dropped.
+
+### Non-TTY subprocesses (Claude Code shell tool, scripts)
+
+Per `codex exec --help`: when a prompt is passed as an argument **and** stdin is a pipe,
+codex waits for stdin EOF before starting and appends stdin to the prompt. In an interactive
+Claude Code or Terminal session, stdin is a TTY (not a pipe), so `< /dev/null` is redundant
+but harmless. **Non-interactive subprocess runners** — Claude Code invoking shell commands
+on your behalf, CI wrappers, or third-party IDE agent shells if you install this skill
+elsewhere — often inherit an **open stdin pipe that never closes**; codex then hangs in the
+foreground too, not only when backgrounded. Keep `< /dev/null` in the recipe above.
