@@ -48,16 +48,11 @@ whether it's live or only committed.
 
 ## codex, mechanically
 This skill uses [codex](https://github.com/openai/codex) as the independent verifier.
-Make sure it's installed and authenticated first. Run it from a dir containing **both**
-the SSOT and the target, read-only — that dir is often a non-git common parent (e.g. when
-the SSOT and target live in different repos/locations), so pass **`--skip-git-repo-check`**
-(codex otherwise aborts with "Not inside a trusted directory") and redirect **`< /dev/null`**
-(else codex blocks on "Reading additional input from stdin…" — see **Non-TTY subprocesses**
-below), and bound it
-with a portable hard timeout — **`perl -e 'alarm shift; exec @ARGV' 600`** (macOS ships no
-`timeout`/`gtimeout`, but perl's `alarm` survives `exec`). Force
-`model_reasoning_effort="high"` — independent verification is the whole point, so give it max
-reasoning; don't pin `-m` (inherit your default codex model):
+Install + authenticate first. Run from a dir with **both** the SSOT and the target, read-only
+(often a common parent when they live in different repos). Pass **`--skip-git-repo-check`**
+(non-trusted dirs), **`< /dev/null`** (non-TTY/agent shells pipe stdin — else codex stalls on
+"Reading additional input from stdin…"), and **`perl -e 'alarm shift; exec @ARGV' 600`** (hard
+cap; macOS has no `timeout`). `-c model_reasoning_effort="high"`; don't pin `-m`:
 ```bash
 cd <dir-with-both> && perl -e 'alarm shift; exec @ARGV' 600 \
   codex exec --sandbox read-only --skip-git-repo-check \
@@ -67,24 +62,8 @@ cd <dir-with-both> && perl -e 'alarm shift; exec @ARGV' 600 \
    <paste the uncertain-points list, or 'read <plan path>'>. Read-only. Be concise." \
   < /dev/null > <output-file> 2>&1; echo "EXIT=$?"
 ```
-`codex exec` **buffers all output until it finishes** (the file reads 0 bytes mid-run
-— normal). Run it in the background, then poll until it grows:
+Buffers until exit (empty file mid-run is normal). Poll until `wc -c` > 120:
 ```bash
 f=<output-file>; until [ "$(wc -c < "$f" 2>/dev/null || echo 0)" -gt 120 ]; do sleep 5; done; cat "$f"
 ```
-A 0-byte file + nonzero exit is usually a blocked telemetry write, not a failed analysis —
-re-run with a shorter prompt if it truly wedges. The hard timeout above is **not optional**:
-without it a wedged codex hangs forever and "still working" is indistinguishable from "dead" —
-the runtime only signals on *completion*, which a hang denies, so "running in the background
-already bounds it" is FALSE. `EXIT=142` = the timeout fired (shorten the prompt or retry);
-output stuck tiny on "Reading additional input from stdin…" = the `< /dev/null` was dropped.
-
-### Non-TTY subprocesses (Claude Code shell tool, scripts)
-
-Per `codex exec --help`: when a prompt is passed as an argument **and** stdin is a pipe,
-codex waits for stdin EOF before starting and appends stdin to the prompt. In an interactive
-Claude Code or Terminal session, stdin is a TTY (not a pipe), so `< /dev/null` is redundant
-but harmless. **Non-interactive subprocess runners** — Claude Code invoking shell commands
-on your behalf, CI wrappers, or third-party IDE agent shells if you install this skill
-elsewhere — often inherit an **open stdin pipe that never closes**; codex then hangs in the
-foreground too, not only when backgrounded. Keep `< /dev/null` in the recipe above.
+`EXIT=142` = timeout. Stuck on the stdin line = missing `< /dev/null`.
