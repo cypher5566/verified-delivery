@@ -67,10 +67,22 @@ cd <dir-with-both> && perl -e 'alarm shift; exec @ARGV' 600 \
   < /dev/null > <output-file> 2>&1; echo "EXIT=$?"
 ```
 `codex exec` **buffers all output until it finishes** (the file reads 0 bytes mid-run
-— normal). Run it in the background, then poll until it grows:
+— normal). Run it in the background, poll until it grows, then **size-gate the read —
+never `cat` the file blindly**. The "Be concise" in the prompt is best-effort only:
+codex routinely ignores it and dumps its full reasoning, and a multi-KB dump cat'd
+into the caller's context occupies it permanently (a prime driver of failed
+compactions in long agent sessions). Protect the context on the read side:
 ```bash
-f=<output-file>; until [ "$(wc -c < "$f" 2>/dev/null || echo 0)" -gt 120 ]; do sleep 5; done; cat "$f"
+f=<output-file>; until [ "$(wc -c < "$f" 2>/dev/null || echo 0)" -gt 120 ]; do sleep 5; done
+sz=$(wc -c < "$f")
+if [ "$sz" -le 4000 ]; then cat "$f"; else
+  echo "[codex output: ${sz} bytes — extracting instead of dumping]"
+  grep -anE 'TRUE|FALSE|PARTIAL|PASS|FAIL|VERDICT' "$f" | head -30
+  tail -c 2500 "$f"    # codex writes its conclusions last
+fi
 ```
+If the extraction is ambiguous, pull the specific region with a targeted `grep -A/-B`
+or `sed -n 'X,Yp'` — never the whole file.
 A 0-byte file + nonzero exit is usually a blocked telemetry write, not a failed analysis —
 re-run with a shorter prompt if it truly wedges. The hard timeout above is **not optional**:
 without it a wedged codex hangs forever and "still working" is indistinguishable from "dead" —
