@@ -52,7 +52,9 @@ Make sure it's installed and authenticated first. Run it from a dir containing *
 the SSOT and the target, read-only — that dir is often a non-git common parent (e.g. when
 the SSOT and target live in different repos/locations), so pass **`--skip-git-repo-check`**
 (codex otherwise aborts with "Not inside a trusted directory") and redirect **`< /dev/null`**
-(else codex blocks on "Reading additional input from stdin…" when backgrounded), and bound it
+(else codex blocks on "Reading additional input from stdin…" when backgrounded), pass
+**`-o <verdict-file>`** (`--output-last-message`: codex writes ONLY its final message there —
+that is the file you read afterwards), and bound it
 with a portable hard timeout — **`perl -e 'alarm shift; exec @ARGV' 600`** (macOS ships no
 `timeout`/`gtimeout`, but perl's `alarm` survives `exec`). Force
 `model_reasoning_effort="high"` — independent verification is the whole point, so give it max
@@ -61,29 +63,34 @@ reasoning; don't pin `-m` (inherit your default codex model):
 cd <dir-with-both> && perl -e 'alarm shift; exec @ARGV' 600 \
   codex exec --sandbox read-only --skip-git-repo-check \
   -c model_reasoning_effort="high" \
+  -o <verdict-file> \
   "Verify each of these against <SSOT path/table> and the working tree, \
    reporting TRUE/FALSE/PARTIAL + a file:line (or table:column) citation: \
    <paste the uncertain-points list, or 'read <plan path>'>. Read-only. Be concise." \
-  < /dev/null > <output-file> 2>&1; echo "EXIT=$?"
+  < /dev/null > <transcript-file> 2>&1; echo "EXIT=$?"
 ```
-`codex exec` **buffers all output until it finishes** (the file reads 0 bytes mid-run
-— normal). Run it in the background, poll until it grows, then **size-gate the read —
-never `cat` the file blindly**. The "Be concise" in the prompt is best-effort only:
-codex routinely ignores it and dumps its full reasoning, and a multi-KB dump cat'd
-into the caller's context occupies it permanently (a prime driver of failed
-compactions in long agent sessions). Protect the context on the read side:
+`codex exec` **buffers all output until it finishes** (both files read 0 bytes mid-run
+— normal). Run it in the background, poll the transcript until it grows, then **read the
+verdict file — never the transcript**. The transcript is the full reasoning dump (the
+"Be concise" in the prompt is best-effort only: codex routinely ignores it and dumps tens
+of KB, a prime driver of failed compactions in long agent sessions) plus an echo of your
+own prompt — grepping it re-reads your own words. It stays on disk for forensics and must
+not enter the caller's context. The verdict file is codex's final message only — normally
+the TRUE/FALSE/PARTIAL list + verdict line, a couple of KB:
 ```bash
-f=<output-file>; until [ "$(wc -c < "$f" 2>/dev/null || echo 0)" -gt 120 ]; do sleep 5; done
-sz=$(wc -c < "$f")
-if [ "$sz" -le 4000 ]; then cat "$f"; else
-  echo "[codex output: ${sz} bytes — extracting instead of dumping]"
-  grep -anE 'TRUE|FALSE|PARTIAL|PASS|FAIL|VERDICT' "$f" | head -30
-  tail -c 2500 "$f"    # codex writes its conclusions last
+t=<transcript-file>; until [ "$(wc -c < "$t" 2>/dev/null || echo 0)" -gt 120 ]; do sleep 5; done
+v=<verdict-file>
+if [ -s "$v" ]; then cat "$v"; else
+  # -o file missing/empty (crash, timeout, old codex) — size-gated extraction, never a blind cat
+  sz=$(wc -c < "$t")
+  echo "[no verdict file; extracting from ${sz}-byte transcript]"
+  grep -anE 'TRUE|FALSE|PARTIAL|PASS|FAIL|VERDICT' "$t" | head -30
+  tail -c 2500 "$t"    # codex writes its conclusions last
 fi
 ```
-If the extraction is ambiguous, pull the specific region with a targeted `grep -A/-B`
-or `sed -n 'X,Yp'` — never the whole file.
-A 0-byte file + nonzero exit is usually a blocked telemetry write, not a failed analysis —
+If the verdict is ambiguous or truncated, pull the specific region from the transcript
+with a targeted `grep -A/-B` or `sed -n 'X,Yp'` — never the whole file.
+A 0-byte transcript + nonzero exit is usually a blocked telemetry write, not a failed analysis —
 re-run with a shorter prompt if it truly wedges. The hard timeout above is **not optional**:
 without it a wedged codex hangs forever and "still working" is indistinguishable from "dead" —
 the runtime only signals on *completion*, which a hang denies, so "running in the background
