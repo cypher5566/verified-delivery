@@ -79,6 +79,15 @@ the verdict and could misreport or wave off a flag. Close that separately: surfa
 codex's `-o` verdict file to the user — never
 just your paraphrase.
 
+## Rubrics（非確定性面的評分）
+
+If the repo you are working in — or the repo **driving** the work (cross-repo sessions) —
+defines `docs/RUBRIC.md`, fold its axes into **every** codex gate prompt and require
+per-item verdicts with citations: design-decision gates append the decision rubric,
+retrospective/completeness reviews append the audit rubric, and the anti-reward-hacking
+rules always ride along. Deterministic gates (tests / exit codes) remain the final stop
+condition; the rubric catches direction/scope/evidence defects machines can't.
+
 ## codex, mechanically
 This skill uses [codex](https://github.com/openai/codex) as the independent verifier.
 Install + authenticate first. Run codex read-only from the source location — for a **single**
@@ -100,12 +109,29 @@ Pass **`--skip-git-repo-check`**
 "Reading additional input from stdin…"), **`-o <verdict-file>`** (`--output-last-message`:
 codex writes ONLY its final message there — that is the file you read afterwards), and
 **`perl -e 'alarm shift; exec @ARGV' 600`** (hard cap; macOS has no `timeout`).
-`-c model_reasoning_effort="high"`; don't pin `-m`:
+
+**Force `model_reasoning_effort="xhigh"`, but don't pin the model.** Independent
+verification is the whole point, so always give the verifier max reasoning — `xhigh` is the
+ceiling of the effort ladder and never goes stale, so pin it hard (the skill used to force
+`high`, which on a modern codex config is a silent *downgrade*). The **model**, though, you
+leave to `-m`-off so the gate inherits your codex default: the day you bump
+`~/.codex/config.toml` to a newer model, this gate picks it up automatically — no skill
+edit, always the latest. Override `-m` only when you deliberately want a specific verifier:
+
+| Pass | When |
+|---|---|
+| *(omit `-m`)* — **default** | Inherit your codex config's default model. Auto-tracks the latest as codex ships new models. |
+| `-m gpt-5.6-sol` | Force today's strongest verifier, regardless of what config says. |
+| `-m gpt-5.5` | When the user asks for it, **or** as a fallback if the inherited model is unavailable / rate-limited (see the failure note below). |
+
+State which model actually ran in your gate report — codex prints it at startup — so the
+verification is attributable and a silent downgrade can't hide.
+
 ```bash
 cd <exact-source-dir> && perl -e 'alarm shift; exec @ARGV' 600 \
   env CODEX_HOME="$HOME/.codex" \
   codex exec --sandbox read-only --skip-git-repo-check \
-  -c model_reasoning_effort="high" \
+  -c model_reasoning_effort="xhigh" \
   -o <verdict-file> \
   "Sources (absolute paths): <SSOT abs path>[, <other abs paths>]. FIRST print each source's \
    fingerprint (git repo: remote get-url origin + HEAD SHA; db/dataset: connection + db/table) \
@@ -120,6 +146,11 @@ cd <exact-source-dir> && perl -e 'alarm shift; exec @ARGV' 600 \
 ```
 `env CODEX_HOME="$HOME/.codex"` pins the verifier to the default Codex home,
 overriding any `CODEX_HOME` inherited from the launching process.
+
+To pin a specific verifier instead of inheriting the default, add `-m gpt-5.6-sol` or
+`-m gpt-5.5` on the `codex exec` line (keep `-c model_reasoning_effort="xhigh"` either way).
+Don't fold `-m` into a `#` comment inside the command — the `\` line-continuations collapse
+the block into one logical line, so a mid-command `#` would swallow the prompt and redirect.
 
 Buffers until exit (empty files mid-run are normal). After the `EXIT=` line appears,
 **read the verdict file, never the transcript**. The transcript holds the full reasoning
@@ -144,4 +175,17 @@ fi
 ```
 Ambiguous or truncated verdict → pull the specific region from the transcript with
 targeted `grep -A/-B` or `sed -n 'X,Yp'`, never the whole file.
-`EXIT=142` = timeout. Stuck on the stdin line = missing `< /dev/null`.
+
+A 0-byte file + nonzero exit is usually a blocked telemetry write, not a failed analysis —
+re-run with a shorter prompt if it truly wedges. The hard timeout above is **not optional**:
+without it a wedged codex hangs forever and "still working" is indistinguishable from "dead" —
+the runtime only signals on *completion*, which a hang denies, so "running in the background
+already bounds it" is FALSE. `EXIT=142` = the timeout fired (shorten the prompt or retry);
+output stuck tiny on "Reading additional input from stdin…" = the `< /dev/null` was dropped.
+
+**Model fallback.** If the inherited default model fails for an *availability* reason — a fast
+nonzero exit whose output names the model / rate-limit / access (distinct from the telemetry
+false alarm above and from `EXIT=142`, which is the timeout, not the model) — re-run the same
+command with the model pinned to an available one (`-m gpt-5.5`, still `xhigh`) and note the
+fallback in your gate report. Don't fall back on a real correctness failure or a timeout;
+those aren't the model's fault.
