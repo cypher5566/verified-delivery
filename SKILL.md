@@ -102,7 +102,7 @@ codex writes ONLY its final message there — that is the file you read afterwar
 **`perl -e 'alarm shift; exec @ARGV' 600`** (hard cap; macOS has no `timeout`).
 `-c model_reasoning_effort="high"`; don't pin `-m`:
 ```bash
-cd <dir-with-both> && perl -e 'alarm shift; exec @ARGV' 600 \
+cd <exact-source-dir> && perl -e 'alarm shift; exec @ARGV' 600 \
   env CODEX_HOME="$HOME/.codex" \
   codex exec --sandbox read-only --skip-git-repo-check \
   -c model_reasoning_effort="high" \
@@ -129,7 +129,7 @@ it stays on disk for forensics and must not enter the caller's context. The verd
 file is the final message only — normally the TRUE/FALSE/PARTIAL list + VERDICT line,
 a couple of KB:
 ```bash
-v=<verdict-file>; t=<transcript-file>
+v="<verdict-file>"; t="<transcript-file>"
 if [ -s "$v" ]; then
   sz=$(wc -c < "$v")
   if [ "$sz" -le 4000 ]; then cat "$v"; else
