@@ -46,6 +46,15 @@ commit to the working branch, or open a PR; the loop is agnostic. If it's a prod
 change, remember commit ≠ deploy: push if that's how the deploy fires, and say plainly
 whether it's live or only committed.
 
+## Rubrics（非確定性面的評分）
+
+If the repo you are working in — or the repo **driving** the work (cross-repo sessions) —
+defines `docs/RUBRIC.md`, fold its axes into **every** codex gate prompt and require
+per-item verdicts with citations: design-decision gates append the decision rubric,
+retrospective/completeness reviews append the audit rubric, and the anti-reward-hacking
+rules always ride along. Deterministic gates (tests / exit codes) remain the final stop
+condition; the rubric catches direction/scope/evidence defects machines can't.
+
 ## codex, mechanically
 This skill uses [codex](https://github.com/openai/codex) as the independent verifier.
 Make sure it's installed and authenticated first. Run it from a dir containing **both**
@@ -54,18 +63,38 @@ the SSOT and target live in different repos/locations), so pass **`--skip-git-re
 (codex otherwise aborts with "Not inside a trusted directory") and redirect **`< /dev/null`**
 (else codex blocks on "Reading additional input from stdin…" when backgrounded), and bound it
 with a portable hard timeout — **`perl -e 'alarm shift; exec @ARGV' 600`** (macOS ships no
-`timeout`/`gtimeout`, but perl's `alarm` survives `exec`). Force
-`model_reasoning_effort="high"` — independent verification is the whole point, so give it max
-reasoning; don't pin `-m` (inherit your default codex model):
+`timeout`/`gtimeout`, but perl's `alarm` survives `exec`).
+
+**Force `model_reasoning_effort="xhigh"`, but don't pin the model.** Independent
+verification is the whole point, so always give the verifier max reasoning — `xhigh` is the
+ceiling of the effort ladder and never goes stale, so pin it hard (the skill used to force
+`high`, which on a modern codex config is a silent *downgrade*). The **model**, though, you
+leave to `-m`-off so the gate inherits your codex default: the day you bump
+`~/.codex/config.toml` to a newer model, this gate picks it up automatically — no skill
+edit, always the latest. Override `-m` only when you deliberately want a specific verifier:
+
+| Pass | When |
+|---|---|
+| *(omit `-m`)* — **default** | Inherit your codex config's default model. Auto-tracks the latest as codex ships new models. |
+| `-m gpt-5.6-sol` | Force today's strongest verifier, regardless of what config says. |
+| `-m gpt-5.5` | When the user asks for it, **or** as a fallback if the inherited model is unavailable / rate-limited (see the failure note below). |
+
+State which model actually ran in your gate report — codex prints it at startup — so the
+verification is attributable and a silent downgrade can't hide.
+
 ```bash
 cd <dir-with-both> && perl -e 'alarm shift; exec @ARGV' 600 \
   codex exec --sandbox read-only --skip-git-repo-check \
-  -c model_reasoning_effort="high" \
+  -c model_reasoning_effort="xhigh" \
   "Verify each of these against <SSOT path/table> and the working tree, \
    reporting TRUE/FALSE/PARTIAL + a file:line (or table:column) citation: \
    <paste the uncertain-points list, or 'read <plan path>'>. Read-only. Be concise." \
   < /dev/null > <output-file> 2>&1; echo "EXIT=$?"
 ```
+To pin a specific verifier instead of inheriting the default, add `-m gpt-5.6-sol` or
+`-m gpt-5.5` on the `codex exec` line (keep `-c model_reasoning_effort="xhigh"` either way).
+Don't fold `-m` into a `#` comment inside the command — the `\` line-continuations collapse
+the block into one logical line, so a mid-command `#` would swallow the prompt and redirect.
 `codex exec` **buffers all output until it finishes** (the file reads 0 bytes mid-run
 — normal). Run it in the background, then poll until it grows:
 ```bash
@@ -77,3 +106,10 @@ without it a wedged codex hangs forever and "still working" is indistinguishable
 the runtime only signals on *completion*, which a hang denies, so "running in the background
 already bounds it" is FALSE. `EXIT=142` = the timeout fired (shorten the prompt or retry);
 output stuck tiny on "Reading additional input from stdin…" = the `< /dev/null` was dropped.
+
+**Model fallback.** If the inherited default model fails for an *availability* reason — a fast
+nonzero exit whose output names the model / rate-limit / access (distinct from the telemetry
+false alarm above and from `EXIT=142`, which is the timeout, not the model) — re-run the same
+command with the model pinned to an available one (`-m gpt-5.5`, still `xhigh`) and note the
+fallback in your gate report. Don't fall back on a real correctness failure or a timeout;
+those aren't the model's fault.
