@@ -14,14 +14,26 @@ Usage:
     python validate.py --skill verified-delivery --eval trigger-eval.example.json
     python validate.py --skill my-skill --eval evals.json --model claude-opus-4-8 --runs 3
 """
-import argparse, json, os, subprocess
+
+import argparse
+import json
+import os
+import subprocess
 
 
 def fired(query: str, skill: str, model: str | None) -> bool:
     """True if `claude -p query` fires Skill(skill=...<skill>...)."""
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    cmd = ["claude", "-p", query, "--output-format", "stream-json",
-           "--verbose", "--max-turns", "1"]
+    cmd = [
+        "claude",
+        "-p",
+        query,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--max-turns",
+        "1",
+    ]
     if model:
         cmd += ["--model", model]
     p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=120)
@@ -45,10 +57,18 @@ def majority(query, skill, model, runs):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--skill", required=True, help="Skill name (as in Skill(skill=...))")
+    ap.add_argument(
+        "--skill", required=True, help="Skill name (as in Skill(skill=...))"
+    )
     ap.add_argument("--eval", required=True, help="Path to eval set JSON")
-    ap.add_argument("--model", default=None, help="Model for claude -p (default: your configured model)")
-    ap.add_argument("--runs", type=int, default=1, help="Runs per query; majority vote (default 1)")
+    ap.add_argument(
+        "--model",
+        default=None,
+        help="Model for claude -p (default: your configured model)",
+    )
+    ap.add_argument(
+        "--runs", type=int, default=1, help="Runs per query; majority vote (default 1)"
+    )
     args = ap.parse_args()
 
     queries = json.load(open(args.eval))
@@ -57,11 +77,17 @@ def main():
         exp = q["should_trigger"]
         got = majority(q["query"], args.skill, args.model, args.runs)
         ok = got == exp
-        if got and exp: tp += 1
-        elif got and not exp: fp.append(q["query"])
-        elif not got and exp: fn.append(q["query"])
-        else: tn += 1
-        print(f"{'OK ' if ok else 'XX '} got={str(got):5} exp={str(exp):5} | {q['query'][:60]}")
+        if got and exp:
+            tp += 1
+        elif got and not exp:
+            fp.append(q["query"])
+        elif not got and exp:
+            fn.append(q["query"])
+        else:
+            tn += 1
+        print(
+            f"{'OK ' if ok else 'XX '} got={str(got):5} exp={str(exp):5} | {q['query'][:60]}"
+        )
 
     n = len(queries)
     prec = tp / (tp + len(fp)) if (tp + len(fp)) else 1.0
@@ -70,10 +96,12 @@ def main():
     print(f"precision={prec:.0%}  recall={rec:.0%}  accuracy={(tp + tn) / n:.0%}")
     if fn:
         print("\nFALSE NEGATIVES (should fire, didn't):")
-        for x in fn: print("  -", x)
+        for x in fn:
+            print("  -", x)
     if fp:
         print("\nFALSE POSITIVES (shouldn't fire, did):")
-        for x in fp: print("  -", x)
+        for x in fp:
+            print("  -", x)
 
 
 if __name__ == "__main__":

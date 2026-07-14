@@ -1,0 +1,38 @@
+{
+  "skill_name": "verified-delivery",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm working in Claude Code. Use verified delivery to port this billing rule and have a different model audit the plan and result.",
+      "expected_output": "The workflow identifies Claude as the author, selects Codex as the independent verifier, runs both gates read-only, and preserves cited evidence.",
+      "files": [],
+      "expectations": [
+        "Claude or Anthropic authors route to the Codex adapter",
+        "Both plan and result gates use fresh verifier sessions",
+        "A completed CLI invocation is not confused with a passing verdict"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I'm using Codex for a schema migration. 走驗證流程，請用不同 provider 審核 plan 跟最後 diff。",
+      "expected_output": "The workflow identifies Codex as the author and selects Claude Opus 4.8 at xhigh effort as the independent verifier.",
+      "files": [],
+      "expectations": [
+        "Codex or OpenAI authors route to the Claude adapter",
+        "Claude runs in safe mode with plan permission and read-only tools",
+        "The audit result records the actual Claude model and prompt hash"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I'm using Cursor with a Gemini model. Put this payment change through verified delivery and automatically choose an independent reviewer.",
+      "expected_output": "The workflow records the actual upstream provider and selects an installed independent verifier, preferring Codex for a Google/Gemini author.",
+      "files": [],
+      "expectations": [
+        "Arbitrary upstream coding-agent names are accepted when their actual model provider is known",
+        "Third-party authors prefer Codex and can use Claude when Codex is not installed",
+        "Runtime verifier failure does not trigger a silent retry or provider fallback"
+      ]
+    }
+  ]
+}

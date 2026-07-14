@@ -1,99 +1,176 @@
 # verified-delivery
 
-A [Claude Code](https://claude.com/claude-code) skill for shipping correctness-critical
-changes with high confidence. An **independent verifier** ([codex](https://github.com/openai/codex))
-gates **both your plan and your finished result** — because the author can't catch the
-author's own bad assumptions.
+A provider-neutral skill for shipping correctness-critical changes with two independent
+reviews: one before implementation and one before integration.
 
-> **plan → codex verifies → build → codex verifies → fix → integrate**
+> **ground truth → independent plan audit → build → independent result audit → fix → integrate**
 
-It works for code (a feature, a migration, a tricky bugfix, a port) and for
-data/analysis (a metric, a SQL change, a report). The spine is the same.
+The upstream coding agent can be Claude Code, Codex, Cursor, Windsurf, Gemini, Aider,
+or another agent. The verifier is selected from a different provider so the author is
+not grading its own assumptions.
 
-## Why this exists
+## Default routing
 
-Strip away any specific project and only three things make this valuable:
+| Upstream author | Independent verifier |
+|---|---|
+| Claude Code / Anthropic | Codex |
+| Codex / OpenAI | Claude Code (`claude-opus-4-8`, `xhigh`) |
+| Other coding agent | Codex when installed, otherwise Claude Code |
 
-1. **Two independent gates.** Having "a review" isn't the point — having a reviewer
-   who is *not the author* is. You're blind to your own bad assumptions, so a
-   different model (codex — different training, different blind spots) checks twice:
-   the **plan, before you build** (catching a wrong assumption here is ~10× cheaper
-   than after you've built on it — the single highest-leverage step), and the
-   **result, after**.
-2. **Ground truth first, with citations.** Before touching anything, pull the exact
-   contract from a named **source of truth (SSOT)** and cite it (`file:line`,
-   `table:column`, or the exact query). Keep what you *know* (defensible by a citation)
-   apart from what you're *guessing*.
-3. **Question the ask.** The requested batch usually shouldn't ship whole. Tag each
-   piece **do now / defer / N-A** before working, so you never build against a surface
-   that doesn't exist or a case that never fires.
+The original Claude Code → Codex workflow remains the default for Claude users. Runtime
+failure never triggers a silent model or provider fallback.
 
-It does **not** make you faster. It makes you wrong less often — and wrong *early*,
-when it's cheap.
+## What stays invariant
 
-## When to use it
+1. Name a checkable single source of truth (SSOT) and cite it.
+2. Scope the requested batch as `do now`, `defer`, or `N/A`.
+3. Have a different provider verify the plan before implementation.
+4. Build and run deterministic checks.
+5. Start a fresh verifier process to audit the result against the SSOT and plan.
+6. Treat missing evidence, timeout, CLI failure, and ambiguous verdicts as non-passing.
 
-Use it when **both** are true: (1) being wrong is expensive and would be discovered
-late, and (2) there's a checkable source of truth. Good fits: metric/SQL changes that
-feed a dashboard, cache-vs-source reconciliations, production hotfixes with blast
-radius, ports where output must match a source exactly, schema migrations.
+It is intentionally heavier than a normal one-shot change. Use it when being wrong is
+expensive and the error would otherwise be discovered late.
 
-Skip it for: read-only questions, auditing an existing artifact, throwaway scripts,
-cosmetic edits, renames, plan-only asks, and plain debugging where you don't yet know
-the fix. For a 5-line obvious, reversible change, the plan gate costs more than it's
-worth.
+## Repository layout
+
+```text
+verified-delivery/
+├── SKILL.md
+├── references/
+│   ├── verifier-policy.md
+│   └── adapters/
+│       ├── claude.md
+│       └── codex.md
+├── scripts/
+│   └── run_verifier.py
+├── tests/
+│   ├── test_cli_compatibility.py
+│   └── test_run_verifier.py
+└── evals/
+```
+
+`SKILL.md` owns the provider-neutral workflow. Adapter details are progressively loaded
+only for the selected verifier. `run_verifier.py` performs provider selection, applies
+read-only flags, supplies the prompt over stdin, enforces a hard timeout, and writes a
+normalized JSON audit record. Both adapters suppress unrelated customizations; Codex's
+configured model ID is resolved first and then pinned for the clean verifier process.
 
 ## Prerequisites
 
-- [Claude Code](https://claude.com/claude-code)
-- [codex CLI](https://github.com/openai/codex), installed and authenticated
-  (`codex` on your `PATH`; any default model is fine — the skill forces high reasoning
-  effort per-call)
+- Python 3.11 or later
+- At least one authenticated verifier CLI:
+  - [Claude Code](https://claude.com/claude-code), or
+  - [Codex CLI](https://github.com/openai/codex)
+- For automatic opposite-provider review, the verifier CLI must differ from the
+  upstream author.
 
 ## Install
 
-Copy the skill into your Claude Code skills directory:
+Install the entire directory because the skill depends on `references/` and `scripts/`.
+
+Claude Code:
 
 ```bash
-mkdir -p ~/.claude/skills/verified-delivery
-cp SKILL.md ~/.claude/skills/verified-delivery/SKILL.md
+git clone https://github.com/cypher5566/verified-delivery.git \
+  ~/.claude/skills/verified-delivery
 ```
 
-## Using it
-
-It triggers on intent, not just a magic word. Any of these will start it:
-
-- "Port this analytics event to the new app, the props must match the old one — plan
-  first, then have codex verify before I implement"
-- "This changes production billing logic; do the kind where the plan gets verified and
-  the result gets verified"
-- "走驗證流程 …" / "plan then codex then exec …" / "double-check both my plan and the
-  implementation before I ship"
-
-Or invoke it directly: `/verified-delivery`.
-
-## Validating triggering
-
-Skill descriptions are the trigger mechanism, so triggering quality is measurable.
-`evals/validate.py` runs each query in `evals/trigger-eval.example.json` against the
-**installed skill** once and computes a confusion matrix (precision / recall / accuracy)
-plus the misclassifications:
+Codex:
 
 ```bash
-python evals/validate.py --skill verified-delivery --eval evals/trigger-eval.example.json
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo cypher5566/verified-delivery --path . --name verified-delivery
 ```
 
-> **Note:** test triggering against the *real installed skill* like this, not via a
-> harness that registers a temp copy — if the skill is already installed under its base
-> name, the model fires the real one and a name-matching harness can silently report 0%.
+Or clone/copy the repository to `~/.codex/skills/verified-delivery`.
+
+## Use
+
+Invoke `/verified-delivery` or ask naturally:
+
+- “This is a billing change. Verify the plan and implementation against the contract.”
+- “走驗證流程，把舊 app 的 analytics event 精準移植過來。”
+- “Have a different model audit both the migration plan and final diff.”
+
+The skill calls the runner for each gate. A direct dry run can inspect routing without
+calling a model:
+
+```bash
+python3 scripts/run_verifier.py \
+  --author cursor \
+  --author-provider anthropic \
+  --verifier auto \
+  --gate plan \
+  --cwd . \
+  --prompt "Verify this plan against README.md" \
+  --dry-run
+```
+
+For real gates, prefer `--prompt-file` and preserve `--output` as audit evidence:
+
+```bash
+python3 scripts/run_verifier.py \
+  --author claude-code \
+  --verifier auto \
+  --gate result \
+  --cwd /path/to/common-parent \
+  --prompt-file /tmp/result-gate.md \
+  --output /tmp/result-gate.json
+```
+
+The JSON `status: completed` means the CLI ran, not that the verifier passed the work.
+Read `response` and require an explicit, cited verdict.
+
+## Configuration
+
+Command-line options override these environment defaults:
+
+```text
+VERIFIED_DELIVERY_VERIFIER=auto
+VERIFIED_DELIVERY_CLAUDE_MODEL=claude-opus-4-8
+VERIFIED_DELIVERY_CODEX_MODEL=<optional versioned model>
+VERIFIED_DELIVERY_OTHER_VERIFIER=codex
+VERIFIED_DELIVERY_EFFORT=xhigh
+VERIFIED_DELIVERY_TIMEOUT=600
+```
+
+For a multi-provider shell such as Cursor or Windsurf, pass its actual model provider
+with `--author-provider`. This prevents a Cursor session using GPT from being incorrectly
+routed back to Codex and labeled independent.
+
+Same-provider verification is rejected unless the user explicitly approves the reduced
+assurance and the caller passes `--allow-same-provider`.
+
+## Test
+
+The runner tests use fake CLIs, so they do not consume model credits:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+When the real CLIs are installed, the same suite also checks their current `--help`
+output for every required safety/session flag. Two live end-to-end tests are opt-in
+because they consume model credits:
+
+```bash
+VERIFIED_DELIVERY_LIVE_TESTS=1 python3 -m unittest discover -s tests -v
+```
+
+The live tests execute both Claude→Codex and Codex→Claude routing against a temporary
+SSOT, require an independently attributed `completed` result, and require the verifier
+response to contain `PASS`.
+
+`evals/validate.py` remains a Claude Code trigger-quality harness for an installed
+skill. `evals/evals.json` documents provider-routing workflow cases.
 
 ## Origin
 
-Distilled, from first principles, out of a native-iOS → Flutter **parity port** pipeline
-(where analytics events had to be byte-identical and a second model verified both the
-plan and the implementation). The project-specific scaffolding — worktrees, a specific
-repo, a PR step, a specific event contract — was deleted; what survived is the
-transferable kernel above.
+Distilled from a native-iOS → Flutter parity pipeline where analytics events had to be
+byte-identical and Codex independently verified Claude Code's plan and implementation.
+That original path remains first-class; the delivery contract now works for any upstream
+coding agent.
 
 ## License
 

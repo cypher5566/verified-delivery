@@ -1,115 +1,124 @@
 ---
 name: verified-delivery
-description: "A high-assurance delivery loop for any change where being wrong is expensive — code OR data/analysis. An independent verifier (codex exec — different model, different blind spots) gates BOTH the plan (before any work) and the result (after), because the author can't catch the author's own bad assumptions. Everything is anchored to a named source of truth with file:line / table:column citations. Use whenever the user says: verified delivery, 走驗證流程, plan then codex then exec, codex 把關, 雙重驗證, 高保證, port/mirror an existing source, build something correctness-critical, or asks to verify a plan or an implementation against ground truth before shipping. Prefer this over an unverified one-shot whenever a wrong assumption would be costly to discover late."
-user-invocable: true
+description: "A provider-neutral, high-assurance delivery loop for correctness-critical code or data changes. An independent verifier from a different provider gates both the plan and the finished result against a named source of truth with file:line or table:column evidence. Use whenever the user says verified delivery, 走驗證流程, Claude/Codex 把關, plan then verify then build, 雙重驗證, 高保證, port or mirror an existing source, or asks to verify a plan and implementation before shipping. Prefer this whenever a wrong assumption would be expensive to discover late."
 ---
 
 # verified-delivery
 
-A loop for shipping **one unit of work** with high confidence — a feature, a
-migration, a tricky bugfix, or a metric / SQL / report. Same spine for code and data.
+Ship one correctness-critical unit of work with two independent gates. The author may
+be Codex, Claude Code, or another agent; the verifier should be a different provider
+with different blind spots.
 
-## Why (don't cut these)
-1. **Two independent gates.** The reviewer is *not the author*. You're blind to
-   your own bad assumptions, so `codex exec` checks twice: the **plan before you
-   build** (catching a wrong assumption here is ~10× cheaper than after — the
-   highest-leverage step), and the **result after**.
-2. **Ground truth first, with citations.** Pull the exact contract from a named
-   **SSOT** and cite it (`file:line` / `table:column` / the exact query). Keep
-   what you *know* (defensible by citation) apart from what you're *guessing*.
-3. **Question the ask.** The requested batch usually shouldn't ship whole. Tag
-   each piece **do now / defer (why) / N/A (why)** before working.
+## Why this works
+
+1. **Independent gates.** The author does not review its own assumptions. Gate 1 checks
+   the plan before work begins; Gate 2 checks the result before integration.
+2. **Ground truth first.** Name the single source of truth (SSOT) and cite it with
+   `file:line`, `table:column`, an API contract section, or the exact query.
+3. **Scope before motion.** Tag each requested item `do now`, `defer (why)`, or
+   `N/A (why)` so an invalid batch does not become an invalid implementation.
+4. **Fail closed.** A missing verifier, timeout, CLI error, ambiguous verdict, or
+   unavailable model is not a passed gate.
+
+## Before the loop
+
+Determine the current upstream coding agent or provider, such as `codex`, `claude`,
+`cursor`, `windsurf`, `gemini`, or `aider`. Then read
+[`references/verifier-policy.md`](references/verifier-policy.md). Read only the adapter
+selected by that policy:
+
+- Claude verifier: [`references/adapters/claude.md`](references/adapters/claude.md)
+- Codex verifier: [`references/adapters/codex.md`](references/adapters/codex.md)
+
+Use the bundled `scripts/run_verifier.py` instead of reconstructing provider commands
+by hand. It selects the opposite provider, enforces read-only flags and a hard timeout,
+and records attributable JSON evidence.
 
 ## The loop
 
-**1 — Ground & scope.** Name the SSOT (with its path) — the thing correctness is
-judged against: the legacy implementation, a spec doc, a ground-truth table, an API
-contract, a schema. Tag the batch (do/defer/N-A). Pull the contract with citations.
-Write down **only the genuinely uncertain points** (defaults, ordering, edge cases,
-timing/double-fire, gating) — everything else you should be able to defend with a
-citation. Verify your assumptions about the *target* too, not just the source (a
-derived view ≠ the business fact).
+### 1. Ground and scope
 
-**2 — Gate 1: codex verifies the plan** (before you build). Pass the SSOT pointer +
-your uncertain-points list **inline in the prompt** (write a file only if the plan is
-too big to inline). Fold every correction in *before* writing anything — codex
-routinely fixes defaults, surface mapping, timing, and whether a thing exists at all.
+Name the SSOT with its path or identifier. Pull the contract with citations. Separate
+facts supported by the SSOT from genuine uncertainties such as defaults, ordering,
+edge cases, timing, double-fire behavior, gating, and target-system differences.
 
-**3 — Build.** Mirror the SSOT; deviate only for a documented reason. Then check your
-*own* output against the SSOT before handing it over: tests + format the files you
-changed (code), or re-run the query and reconcile against the SSOT, not a cache (data).
+Tag the requested batch `do now`, `defer`, or `N/A`. Verify assumptions about the
+target too: a derived view is not automatically the underlying business fact.
 
-**4 — Gate 2: codex verifies the result → fix → integrate.** Confirm with the user
-before changing code. Run codex on the diff / output vs the SSOT + plan; fix **every**
-correctness flag with a check per fix. Then integrate **per your team's convention** —
-commit to the working branch, or open a PR; the loop is agnostic. If it's a production
-change, remember commit ≠ deploy: push if that's how the deploy fires, and say plainly
-whether it's live or only committed.
+### 2. Gate 1: verify the plan
 
-## Rubrics（非確定性面的評分）
+Prepare a concise verification request containing:
 
-If the repo you are working in — or the repo **driving** the work (cross-repo sessions) —
-defines `docs/RUBRIC.md`, fold its axes into **every** codex gate prompt and require
-per-item verdicts with citations: design-decision gates append the decision rubric,
-retrospective/completeness reviews append the audit rubric, and the anti-reward-hacking
-rules always ride along. Deterministic gates (tests / exit codes) remain the final stop
-condition; the rubric catches direction/scope/evidence defects machines can't.
+- the SSOT path or identifier;
+- the scoped plan;
+- the uncertain-points list;
+- the target paths the verifier may read;
+- `docs/RUBRIC.md` when the working or driving repo defines it;
+- a request for `TRUE`, `FALSE`, or `PARTIAL` per item with citations.
 
-## codex, mechanically
-This skill uses [codex](https://github.com/openai/codex) as the independent verifier.
-Make sure it's installed and authenticated first. Run it from a dir containing **both**
-the SSOT and the target, read-only — that dir is often a non-git common parent (e.g. when
-the SSOT and target live in different repos/locations), so pass **`--skip-git-repo-check`**
-(codex otherwise aborts with "Not inside a trusted directory") and redirect **`< /dev/null`**
-(else codex blocks on "Reading additional input from stdin…" when backgrounded), and bound it
-with a portable hard timeout — **`perl -e 'alarm shift; exec @ARGV' 600`** (macOS ships no
-`timeout`/`gtimeout`, but perl's `alarm` survives `exec`).
-
-**Force `model_reasoning_effort="xhigh"`, but don't pin the model.** Independent
-verification is the whole point, so always give the verifier max reasoning — `xhigh` is the
-ceiling of the effort ladder and never goes stale, so pin it hard (the skill used to force
-`high`, which on a modern codex config is a silent *downgrade*). The **model**, though, you
-leave to `-m`-off so the gate inherits your codex default: the day you bump
-`~/.codex/config.toml` to a newer model, this gate picks it up automatically — no skill
-edit, always the latest. Override `-m` only when you deliberately want a specific verifier:
-
-| Pass | When |
-|---|---|
-| *(omit `-m`)* — **default** | Inherit your codex config's default model. Auto-tracks the latest as codex ships new models. |
-| `-m gpt-5.6-sol` | Force today's strongest verifier, regardless of what config says. |
-| `-m gpt-5.5` | When the user asks for it, **or** as a fallback if the inherited model is unavailable / rate-limited (see the failure note below). |
-
-State which model actually ran in your gate report — codex prints it at startup — so the
-verification is attributable and a silent downgrade can't hide.
+Run the independent verifier before implementing:
 
 ```bash
-cd <dir-with-both> && perl -e 'alarm shift; exec @ARGV' 600 \
-  codex exec --sandbox read-only --skip-git-repo-check \
-  -c model_reasoning_effort="xhigh" \
-  "Verify each of these against <SSOT path/table> and the working tree, \
-   reporting TRUE/FALSE/PARTIAL + a file:line (or table:column) citation: \
-   <paste the uncertain-points list, or 'read <plan path>'>. Read-only. Be concise." \
-  < /dev/null > <output-file> 2>&1; echo "EXIT=$?"
+python3 <skill-root>/scripts/run_verifier.py \
+  --author <upstream-agent-or-provider> \
+  --author-provider <actual-model-provider-if-agent-is-multi-provider> \
+  --verifier auto \
+  --gate plan \
+  --cwd <dir-containing-ssot-and-target> \
+  --prompt-file <gate-1-prompt.md> \
+  --output <gate-1-result.json>
 ```
-To pin a specific verifier instead of inheriting the default, add `-m gpt-5.6-sol` or
-`-m gpt-5.5` on the `codex exec` line (keep `-c model_reasoning_effort="xhigh"` either way).
-Don't fold `-m` into a `#` comment inside the command — the `\` line-continuations collapse
-the block into one logical line, so a mid-command `#` would swallow the prompt and redirect.
-`codex exec` **buffers all output until it finishes** (the file reads 0 bytes mid-run
-— normal). Run it in the background, then poll until it grows:
-```bash
-f=<output-file>; until [ "$(wc -c < "$f" 2>/dev/null || echo 0)" -gt 120 ]; do sleep 5; done; cat "$f"
-```
-A 0-byte file + nonzero exit is usually a blocked telemetry write, not a failed analysis —
-re-run with a shorter prompt if it truly wedges. The hard timeout above is **not optional**:
-without it a wedged codex hangs forever and "still working" is indistinguishable from "dead" —
-the runtime only signals on *completion*, which a hang denies, so "running in the background
-already bounds it" is FALSE. `EXIT=142` = the timeout fired (shorten the prompt or retry);
-output stuck tiny on "Reading additional input from stdin…" = the `< /dev/null` was dropped.
 
-**Model fallback.** If the inherited default model fails for an *availability* reason — a fast
-nonzero exit whose output names the model / rate-limit / access (distinct from the telemetry
-false alarm above and from `EXIT=142`, which is the timeout, not the model) — re-run the same
-command with the model pinned to an available one (`-m gpt-5.5`, still `xhigh`) and note the
-fallback in your gate report. Don't fall back on a real correctness failure or a timeout;
-those aren't the model's fault.
+`status: completed` means only that the verifier CLI ran successfully. Read `response`
+and require an explicit passing verdict supported by citations. Fold every correction
+into the plan before writing the implementation.
+
+### 3. Build and self-check
+
+Mirror the SSOT and deviate only for a documented reason. Check the result yourself:
+
+- code: run relevant tests and formatting for changed files;
+- data: rerun the query and reconcile against the SSOT rather than a cache;
+- both: record deterministic evidence and remaining uncertainty.
+
+Do not let a model verdict override a failing deterministic test.
+
+### 4. Gate 2: verify the result
+
+Prepare a fresh result-gate request containing the accepted plan, SSOT, changed paths
+or diff artifact, test evidence, and any applicable rubric. Start a new verifier
+process; do not resume Gate 1's session.
+
+```bash
+python3 <skill-root>/scripts/run_verifier.py \
+  --author <upstream-agent-or-provider> \
+  --author-provider <actual-model-provider-if-agent-is-multi-provider> \
+  --verifier auto \
+  --gate result \
+  --cwd <dir-containing-ssot-and-target> \
+  --prompt-file <gate-2-prompt.md> \
+  --output <gate-2-result.json>
+```
+
+Fix every correctness flag and add a check for each fix. Rerun deterministic checks
+and Gate 2 until both pass. Integrate only within the user's authorization and the
+team's convention. Commit is not deploy; state plainly whether the change is local,
+committed, pushed, deployed, or merely reviewed.
+
+## Assurance rules
+
+- Opposite-provider verification is the default: Claude author → Codex verifier;
+  Codex author → Claude verifier. Other upstream agents prefer Codex when available,
+  then Claude; both are independent of a genuinely third-party author.
+- Multi-provider shells such as Cursor and Windsurf must pass their actual upstream
+  model provider through `--author-provider`; the shell name alone cannot prove
+  independence.
+- `auto` never silently falls back to the author's provider. If independence is
+  unavailable, stop and report the blocked gate.
+- Same-provider verification requires explicit user approval plus
+  `--allow-same-provider`; label the result `reduced`, not independent assurance.
+- Do not add an automatic model fallback. A deliberate retry must name and record the
+  replacement model.
+- Preserve each gate's JSON result. It records verifier, requested and observed model,
+  effort, prompt hash, duration, exit status, and response.
+- Treat `timed_out`, `failed`, missing citations, and ambiguous responses as non-passing.
