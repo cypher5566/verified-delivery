@@ -65,7 +65,10 @@ target too: a derived view is not automatically the underlying business fact.
 
 Prepare a concise verification request containing:
 
-- the SSOT path or identifier;
+- the original problem, restated in one line (the verifier audits the frame, not
+  just your list — see the brief the runner injects);
+- the SSOT path or identifier, plus expected source fingerprints (git remote +
+  HEAD SHA, or resolved db/table) whenever look-alike paths or siblings exist;
 - the scoped plan;
 - the uncertain-points list;
 - the target paths the verifier may read;

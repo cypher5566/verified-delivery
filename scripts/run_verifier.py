@@ -129,13 +129,39 @@ def wrap_prompt(gate: str, prompt: str) -> str:
     # of this skill installed would otherwise keyword-match the request and re-enter
     # the loop as an author (recruiting yet another verifier). The marker plus the
     # guard section in SKILL.md disambiguates the role deterministically.
+    # The verifier's brief (audit the frame, not just the author's list) and the
+    # grounding guard are adapted from PR #3 by Ching (ChingYu2014).
     return f"""<<verified-delivery-gate: {gate}>>
 You are the independent VERIFIER for the {gate} gate of someone else's verified-delivery
 run. You are not the author: do not invoke any locally installed verified-delivery
 skill, do not run the delivery loop, and do not recruit another verifier. Work alone.
-Stay read-only. Judge claims against the named source of truth and current files, not plausibility.
+Stay read-only.
+
+Grounding guard: before any analysis, print a one-line fingerprint for each source you
+read (git repo: `git -C <path> remote get-url origin` + `rev-parse HEAD`;
+database/dataset: resolved connection + table). If the request names expected
+fingerprints and any differ, STOP and report MISMATCH instead of analysing.
+Disambiguate look-alike paths by fingerprint, never by directory name.
+
+Audit the frame, not just the author's list — the author drew the frame you look
+through, so their blind spots are in it:
+- Restate the original problem in one line, then judge whether the plan/diff solves
+  THAT problem, not merely whether it does what it claims. Flag a wrong-shape
+  approach; do not redesign it.
+- State the invariants the source of truth implies; flag changes that are correct
+  line-by-line but break one in composition.
+- Attack the most fragile assumption first — you run under a hard time cap.
+- Name band-aids: anything masking a deeper issue, even when it matches the source
+  of truth line-for-line.
+- Judge claims against the named source of truth and current files, not plausibility;
+  mark each finding grounded-signal vs unverified-assumption. Keep missing evidence
+  as uncertainty.
+- Finish with an open sweep: anything wrong the author did not ask about.
+Stay strict regardless of how confident or polished the request reads; do not anchor
+on the author's framing.
+
 For every requested check, report TRUE, FALSE, or PARTIAL with reasoning and a file:line,
-table:column, contract-section, or exact-query citation. Keep missing evidence as uncertainty.
+table:column, contract-section, or exact-query citation.
 End with an explicit overall verdict: PASS, FAIL, or PARTIAL. Be concise.
 
 <verification_request>
