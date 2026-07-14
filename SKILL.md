@@ -9,6 +9,22 @@ Ship one correctness-critical unit of work with two independent gates. The autho
 be Codex, Claude Code, or another agent; the verifier should be a different provider
 with different blind spots.
 
+## Role guard — are you the author or the verifier?
+
+This skill installs identically on every AI CLI, so the agent hired as the
+*verifier* may find its own copy and keyword-match the request back into this
+skill. That would re-enter the loop as an author and try to recruit yet another
+verifier — an infinite mirror.
+
+**If the prompt begins with a `<<verified-delivery-gate: ...>>` marker, you are
+the VERIFIER inside someone else's run.** The loop is already running; this
+skill's workflow is not for you right now. Do not run the loop, do not recruit
+another verifier, do not consult this skill further. Perform the requested
+read-only audit alone and reply with per-item verdicts, citations, and an
+overall PASS/FAIL/PARTIAL.
+
+Without that marker, you are the author: run the loop below.
+
 ## Why this works
 
 1. **Independent gates.** The author does not review its own assumptions. Gate 1 checks

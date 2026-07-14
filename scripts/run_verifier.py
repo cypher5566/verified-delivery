@@ -125,7 +125,14 @@ def read_prompt(args: argparse.Namespace) -> str:
 
 
 def wrap_prompt(gate: str, prompt: str) -> str:
-    return f"""You are the independent verifier for the {gate} gate of a verified-delivery workflow.
+    # The first line is the role-handshake marker. A verifier that has its own copy
+    # of this skill installed would otherwise keyword-match the request and re-enter
+    # the loop as an author (recruiting yet another verifier). The marker plus the
+    # guard section in SKILL.md disambiguates the role deterministically.
+    return f"""<<verified-delivery-gate: {gate}>>
+You are the independent VERIFIER for the {gate} gate of someone else's verified-delivery
+run. You are not the author: do not invoke any locally installed verified-delivery
+skill, do not run the delivery loop, and do not recruit another verifier. Work alone.
 Stay read-only. Judge claims against the named source of truth and current files, not plausibility.
 For every requested check, report TRUE, FALSE, or PARTIAL with reasoning and a file:line,
 table:column, contract-section, or exact-query citation. Keep missing evidence as uncertainty.
@@ -472,11 +479,18 @@ def run(args: argparse.Namespace) -> int:
         write_result(base, args.output)
         return 0
 
+    # Audit-trail sidecar: raw verifier stdout (Codex JSONL exec events show which
+    # files/commands the auditor ran). Written live so `tail -f <output>.events.jsonl`
+    # gives mid-run visibility; kept on success for post-hoc audit.
+    events_path = f"{args.output}.events.jsonl"
+    base["events_file"] = events_path
+    events_fh = open(events_path, "w", encoding="utf-8")
+
     try:
         process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            stdout=events_fh,
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=os.name == "posix",
@@ -496,10 +510,20 @@ def run(args: argparse.Namespace) -> int:
         write_result(base, args.output)
         return EXIT_FAILED
 
+    def read_events() -> str:
+        events_fh.flush()
+        try:
+            with open(events_path, encoding="utf-8") as fh:
+                return fh.read()
+        except OSError:
+            return ""
+
     try:
-        stdout, stderr = process.communicate(input=prompt, timeout=args.timeout)
+        _, stderr = process.communicate(input=prompt, timeout=args.timeout)
+        stdout = read_events()
     except subprocess.TimeoutExpired:
-        stdout, stderr = stop_process_group(process)
+        _, stderr = stop_process_group(process)
+        stdout = read_events()
         base.update(
             {
                 "status": "timed_out",
@@ -533,6 +557,7 @@ def run(args: argparse.Namespace) -> int:
         write_result(base, args.output)
         return EXIT_FAILED
 
+    events_fh.close()
     parsed = (
         parse_claude(stdout, requested_model)
         if verifier == "claude"

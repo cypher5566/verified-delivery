@@ -31,6 +31,17 @@ making an unsupported claim.
 The runner extracts the last agent message and usage from Codex JSONL events. A
 successful CLI exit still does not imply a passing verification verdict.
 
+The raw JSONL event stream is preserved at `<output>.events.jsonl` and written
+live, so the audit trail (which files/commands the verifier ran, via `item.*`
+events with `type: command_execution`) survives success and can be watched
+mid-run with `tail -f <output>.events.jsonl`. Post-hoc:
+`jq -r 'select(.item.type=="command_execution") | .item.command' <output>.events.jsonl`.
+
+Every gate prompt is prefixed with the `<<verified-delivery-gate: ...>>`
+role-handshake marker; a Codex-side copy of this skill recognizes it via the
+SKILL.md role guard and stays in the verifier role instead of re-entering the
+authoring loop.
+
 ## Equivalent command
 
 The runner constructs the equivalent of:

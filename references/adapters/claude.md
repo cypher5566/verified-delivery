@@ -39,3 +39,9 @@ env -u CLAUDECODE claude -p --safe-mode \
 ```
 
 The prompt is supplied over stdin and the Python runner provides the hard timeout.
+
+Every gate prompt is prefixed with the `<<verified-delivery-gate: ...>>`
+role-handshake marker; a Claude-side copy of this skill recognizes it via the
+SKILL.md role guard and stays in the verifier role instead of re-entering the
+authoring loop. The runner also preserves raw verifier output at
+`<output>.events.jsonl` for mid-run visibility and post-hoc audit.
