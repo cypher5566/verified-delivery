@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -12,10 +13,43 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run_verifier.py"
+SEATBELT_RUNNER = ROOT / "scripts" / "run_macos_seatbelt.py"
 LIVE = os.environ.get("VERIFIED_DELIVERY_LIVE_TESTS") == "1"
 
 
 class CliCompatibilityTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "macOS Seatbelt only")
+    def test_macos_seatbelt_runner_deny_writes_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            protected = Path(directory)
+            target = protected / "must-not-exist"
+            command = [
+                sys.executable,
+                "-c",
+                f"from pathlib import Path; Path({str(target)!r}).write_text('no')",
+            ]
+
+            def encoded(value: object) -> str:
+                raw = json.dumps(value).encode("utf-8")
+                return base64.urlsafe_b64encode(raw).decode("ascii")
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SEATBELT_RUNNER),
+                    "--deny-write-base64",
+                    encoded(str(protected)),
+                    "--argv-base64",
+                    encoded(command),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertFalse(target.exists())
+
     @unittest.skipUnless(shutil.which("claude"), "claude CLI is not installed")
     def test_claude_help_exposes_required_read_only_flags(self) -> None:
         completed = subprocess.run(
@@ -34,6 +68,10 @@ class CliCompatibilityTests(unittest.TestCase):
             "xhigh",
             "--permission-mode",
             "--tools",
+            "--allowedTools",
+            "--disallowedTools",
+            "--settings",
+            "--strict-mcp-config",
             "--no-session-persistence",
             "--output-format",
         ):

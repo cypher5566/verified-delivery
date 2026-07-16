@@ -69,6 +69,25 @@ Every gate prompt should name:
 Ask for a per-item `TRUE`, `FALSE`, or `PARTIAL` verdict, reasoning, and citations.
 Missing evidence must remain uncertainty rather than being guessed into a pass.
 
+Claude source audits default to Read/Glob/Grep. If a result gate specifically requires
+independent command reproduction, the caller may opt in to the runner's read-only shell
+profile with one exact, non-compound command per approval. Separators, redirects,
+substitutions, and the `*` permission wildcard are rejected. The profile is fail-closed:
+Claude runs in `dontAsk`, the full `cwd` is OS-level deny-write, sandbox startup must
+succeed, and unsandboxed retry is disabled. This is evidence execution, not permission
+to modify the target. The result path and live event sidecar must resolve outside `cwd`.
+
+The invariant is scoped to the audited tree. Exact ADB, database, cloud, or network
+commands can still mutate external targets, so approve only semantically read-only
+queries and never infer device- or host-wide read-only behavior from this profile.
+
+On macOS, Playwright/Chromium can require Mach IPC that Claude's native sandbox blocks.
+Use `--macos-seatbelt-command` only for that exact browser command. The bundled argv-only
+wrapper runs outside the native sandbox and immediately reapplies a fixed Seatbelt
+`cwd` deny-write boundary. Nested shells are rejected. The wrapper can use normal host
+resources outside `cwd` to launch Chromium; it is not a general unsandboxed escape hatch
+or a host-wide read-only sandbox.
+
 ## Result semantics
 
 The runner's `status` describes execution, not correctness:

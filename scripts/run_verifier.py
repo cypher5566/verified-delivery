@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
+import re
+import shlex
 import signal
 import shutil
 import subprocess
@@ -24,6 +27,35 @@ EXIT_USAGE = 2
 EXIT_UNAVAILABLE = 3
 EXIT_TIMEOUT = 124
 SUPPORTED_PROVIDERS = ("claude", "codex")
+FORBIDDEN_SHELL_FRAGMENTS = (
+    "\n",
+    "\r",
+    "\0",
+    "&&",
+    "||",
+    ";",
+    "|",
+    "&",
+    "`",
+    "$(",
+    "<",
+    ">",
+    "*",
+)
+MACOS_SEATBELT_RUNNER = Path(__file__).resolve().with_name("run_macos_seatbelt.py")
+SHELL_EXECUTABLES = {
+    "bash",
+    "csh",
+    "dash",
+    "fish",
+    "ksh",
+    "powershell",
+    "pwsh",
+    "sh",
+    "tcsh",
+    "zsh",
+}
+ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)
 
 
 class ConfigurationError(Exception):
@@ -170,8 +202,128 @@ End with an explicit overall verdict: PASS, FAIL, or PARTIAL. Be concise.
 """
 
 
-def claude_command(model: str, effort: str) -> list[str]:
-    return [
+def readonly_shell_contract(commands: list[str]) -> str:
+    rendered = "\n".join(f"- `{command}`" for command in commands)
+    return f"""
+
+<readonly_shell_contract>
+The Bash tool already returns stdout, stderr, and exit status. Invoke each approved
+command separately and character-for-character exactly as listed below. Never append
+`echo $?`, a separator, redirect, loop, wrapper, timeout, `cd`, environment change, or
+any other character. A modified or combined command will be permission-denied and must
+remain a non-passing uncertainty; do not retry it in a different shape.
+
+Approved exact commands:
+{rendered}
+</readonly_shell_contract>
+"""
+
+
+def validate_shell_commands(commands: list[str]) -> None:
+    for command in commands:
+        if not command.strip():
+            raise ConfigurationError("an approved evidence command cannot be empty")
+        fragment = next(
+            (part for part in FORBIDDEN_SHELL_FRAGMENTS if part in command), None
+        )
+        if fragment is not None:
+            raise ConfigurationError(
+                "an approved evidence command must be exact and non-compound; "
+                f"found forbidden fragment {fragment!r}"
+            )
+
+
+def encode_json(value: object) -> str:
+    raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def macos_command_executable(argv: list[str]) -> str:
+    index = 0
+    while index < len(argv) and ENV_ASSIGNMENT.fullmatch(argv[index]):
+        index += 1
+    if index >= len(argv):
+        raise ConfigurationError(
+            "--macos-seatbelt-command must include an executable after environment "
+            "assignments"
+        )
+    executable = Path(argv[index]).name.lower()
+    forbidden = next(
+        (
+            Path(item).name.lower()
+            for item in argv[index:]
+            if Path(item).name.lower() == "env"
+            or Path(item).name.lower() in SHELL_EXECUTABLES
+        ),
+        None,
+    )
+    if forbidden is not None:
+        raise ConfigurationError(
+            "--macos-seatbelt-command cannot include env or a shell interpreter "
+            f"argv ({forbidden}); "
+            "provide the deterministic executable argv directly"
+        )
+    return executable
+
+
+def macos_seatbelt_wrapper(cwd: Path, command: str) -> str:
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise ConfigurationError(f"invalid --macos-seatbelt-command: {exc}") from exc
+    if not argv:
+        raise ConfigurationError("--macos-seatbelt-command cannot be empty")
+    macos_command_executable(argv)
+    return shlex.join(
+        [
+            str(Path(sys.executable).resolve()),
+            str(MACOS_SEATBELT_RUNNER),
+            "--deny-write-base64",
+            encode_json(str(cwd)),
+            "--argv-base64",
+            encode_json(argv),
+        ]
+    )
+
+
+def normalize_result_output(output: str, cwd: Path, readonly_shell: bool) -> str:
+    if output == "-":
+        if readonly_shell:
+            raise ConfigurationError(
+                "--allow-readonly-shell requires --output at a path outside cwd"
+            )
+        return output
+    destination = Path(output).expanduser().resolve()
+    if readonly_shell and (destination == cwd or cwd in destination.parents):
+        raise ConfigurationError(
+            "--allow-readonly-shell requires --output outside the deny-write cwd"
+        )
+    return str(destination)
+
+
+def open_events_file(output: str) -> tuple[Path, Any]:
+    if output == "-":
+        handle = tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            prefix="verified-delivery-",
+            suffix=".events.jsonl",
+            delete=False,
+        )
+        return Path(handle.name), handle
+    events_path = Path(f"{output}.events.jsonl")
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    return events_path, events_path.open("w", encoding="utf-8")
+
+
+def claude_command(
+    model: str,
+    effort: str,
+    cwd: Path,
+    shell_commands: list[str],
+    excluded_commands: list[str],
+) -> list[str]:
+    command = [
         "claude",
         "-p",
         "--safe-mode",
@@ -179,14 +331,65 @@ def claude_command(model: str, effort: str) -> list[str]:
         model,
         "--effort",
         effort,
-        "--permission-mode",
-        "plan",
-        "--tools",
-        "Read,Glob,Grep",
-        "--no-session-persistence",
-        "--output-format",
-        "json",
     ]
+    if not shell_commands:
+        command.extend(
+            [
+                "--permission-mode",
+                "plan",
+                "--tools",
+                "Read,Glob,Grep",
+            ]
+        )
+    else:
+        # Claude's native sandbox uses Seatbelt on macOS and bubblewrap on Linux.
+        # The caller opts in with exact commands; the target tree remains OS-level
+        # read-only even for pytest/node subprocesses, and unsandboxed fallback is
+        # a hard failure rather than a silent downgrade.
+        sandbox_settings = {
+            "sandbox": {
+                "enabled": True,
+                "autoAllowBashIfSandboxed": False,
+                "failIfUnavailable": True,
+                "allowUnsandboxedCommands": False,
+                "filesystem": {"denyWrite": [str(cwd)]},
+                "network": {"allowLocalBinding": True},
+            }
+        }
+        if excluded_commands:
+            sandbox_settings["sandbox"]["excludedCommands"] = excluded_commands
+        command.extend(
+            [
+                "--permission-mode",
+                "dontAsk",
+                "--tools",
+                "Read,Glob,Grep,Bash",
+                "--allowedTools",
+                "Read",
+                "Glob",
+                "Grep",
+                *[f"Bash({item})" for item in shell_commands],
+                "--disallowedTools",
+                "Edit",
+                "Write",
+                "NotebookEdit",
+                "WebFetch",
+                "WebSearch",
+                "Agent",
+                "Task",
+                "--settings",
+                json.dumps(sandbox_settings, separators=(",", ":")),
+                "--strict-mcp-config",
+            ]
+        )
+    command.extend(
+        [
+            "--no-session-persistence",
+            "--output-format",
+            "json",
+        ]
+    )
+    return command
 
 
 def codex_command(model: str | None, effort: str) -> list[str]:
@@ -209,11 +412,24 @@ def codex_command(model: str | None, effort: str) -> list[str]:
     return command
 
 
-def command_for(verifier: str, model: str | None, effort: str) -> list[str]:
+def command_for(
+    verifier: str,
+    model: str | None,
+    effort: str,
+    cwd: Path,
+    shell_commands: list[str],
+    excluded_commands: list[str],
+) -> list[str]:
     if verifier == "claude":
         if not model:
             raise ConfigurationError("the Claude adapter requires a model")
-        return claude_command(model, effort)
+        return claude_command(
+            model,
+            effort,
+            cwd,
+            shell_commands,
+            excluded_commands,
+        )
     return codex_command(model, effort)
 
 
@@ -416,6 +632,34 @@ def parser() -> argparse.ArgumentParser:
         type=float,
         default=float(env_default("VERIFIED_DELIVERY_TIMEOUT", "600")),
     )
+    ap.add_argument(
+        "--allow-readonly-shell",
+        action="store_true",
+        help=(
+            "Opt a Claude verifier into exact Bash commands inside its native "
+            "OS sandbox; cwd is deny-write, output must be external, and "
+            "unsandboxed fallback is disabled"
+        ),
+    )
+    ap.add_argument(
+        "--shell-command",
+        action="append",
+        default=[],
+        help=(
+            "One exact, non-compound command permitted by --allow-readonly-shell; "
+            "repeat for each deterministic check"
+        ),
+    )
+    ap.add_argument(
+        "--macos-seatbelt-command",
+        action="append",
+        default=[],
+        help=(
+            "One exact argv-only command that needs macOS IPC (for example "
+            "Playwright); runs outside Claude's native sandbox but inside a fixed "
+            "Seatbelt profile that deny-writes cwd"
+        ),
+    )
     ap.add_argument("--dry-run", action="store_true")
     return ap
 
@@ -434,19 +678,66 @@ def error_payload(args: argparse.Namespace, message: str) -> dict[str, Any]:
 
 
 def run(args: argparse.Namespace) -> int:
+    result_output = args.output if not args.allow_readonly_shell else "-"
     try:
         cwd = args.cwd.expanduser().resolve(strict=True)
         if not cwd.is_dir():
             raise ConfigurationError(f"cwd is not a directory: {cwd}")
         if args.timeout <= 0:
             raise ConfigurationError("timeout must be greater than zero")
+        result_output = normalize_result_output(
+            args.output,
+            cwd,
+            args.allow_readonly_shell,
+        )
         verifier, author_provider, selection_reason = choose_verifier(
             args.author,
             args.author_provider,
             args.verifier,
             args.allow_same_provider,
         )
+        requested_commands = [*args.shell_command, *args.macos_seatbelt_command]
+        if requested_commands and not args.allow_readonly_shell:
+            raise ConfigurationError(
+                "a shell command requires explicit --allow-readonly-shell"
+            )
+        if args.allow_readonly_shell and not requested_commands:
+            raise ConfigurationError(
+                "--allow-readonly-shell requires at least one shell command"
+            )
+        if args.allow_readonly_shell and verifier != "claude":
+            raise ConfigurationError(
+                "--allow-readonly-shell is only needed by the Claude adapter; "
+                "the Codex adapter already uses its native read-only sandbox"
+            )
+        validate_shell_commands(requested_commands)
+        if args.macos_seatbelt_command:
+            if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file():
+                raise ConfigurationError(
+                    "--macos-seatbelt-command requires macOS /usr/bin/sandbox-exec"
+                )
+            if not MACOS_SEATBELT_RUNNER.is_file():
+                raise ConfigurationError(
+                    f"missing bundled Seatbelt runner: {MACOS_SEATBELT_RUNNER}"
+                )
+        seatbelt_commands = [
+            {
+                "requested": item,
+                "wrapper": macos_seatbelt_wrapper(cwd, item),
+            }
+            for item in args.macos_seatbelt_command
+        ]
+        effective_shell_commands = [
+            *args.shell_command,
+            *[item["wrapper"] for item in seatbelt_commands],
+        ]
+        excluded_prefix = shlex.join(
+            [str(Path(sys.executable).resolve()), str(MACOS_SEATBELT_RUNNER)]
+        )
+        excluded_commands = [f"{excluded_prefix} *"] if seatbelt_commands else []
         prompt = wrap_prompt(args.gate, read_prompt(args))
+        if args.allow_readonly_shell:
+            prompt += readonly_shell_contract(effective_shell_commands)
         if args.model:
             command_model = args.model
             requested_model = args.model
@@ -469,9 +760,16 @@ def run(args: argparse.Namespace) -> int:
                 requested_model = configured_model or "configured-default"
                 requested_model_source = configured_source
                 command_model = configured_model
-        command = command_for(verifier, command_model, args.effort)
+        command = command_for(
+            verifier,
+            command_model,
+            args.effort,
+            cwd,
+            effective_shell_commands,
+            excluded_commands,
+        )
     except (ConfigurationError, OSError) as exc:
-        write_result(error_payload(args, str(exc)), args.output)
+        write_result(error_payload(args, str(exc)), result_output)
         return EXIT_UNAVAILABLE
 
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -494,6 +792,17 @@ def run(args: argparse.Namespace) -> int:
         "cwd": str(cwd),
         "prompt_sha256": prompt_hash,
         "timeout_seconds": args.timeout,
+        "readonly_shell": {
+            "enabled": args.allow_readonly_shell,
+            "sandbox": "claude-native" if args.allow_readonly_shell else None,
+            "permission_mode": "dontAsk" if args.allow_readonly_shell else None,
+            "deny_write": [str(cwd)] if args.allow_readonly_shell else [],
+            "allowed_commands": effective_shell_commands,
+            "direct_commands": args.shell_command,
+            "macos_seatbelt_commands": seatbelt_commands,
+            "native_sandbox_exclusions": excluded_commands,
+            "unsandboxed_fallback": False if args.allow_readonly_shell else None,
+        },
         "command": [*command, "<prompt-via-stdin>"],
         "executable": shutil.which(verifier),
         "started_at": started_at,
@@ -502,15 +811,31 @@ def run(args: argparse.Namespace) -> int:
     if args.dry_run:
         base["duration_seconds"] = round(time.monotonic() - started, 3)
         base["finished_at"] = utc_now()
-        write_result(base, args.output)
+        write_result(base, result_output)
         return 0
 
     # Audit-trail sidecar: raw verifier stdout (Codex JSONL exec events show which
     # files/commands the auditor ran). Written live so `tail -f <output>.events.jsonl`
     # gives mid-run visibility; kept on success for post-hoc audit.
-    events_path = f"{args.output}.events.jsonl"
-    base["events_file"] = events_path
-    events_fh = open(events_path, "w", encoding="utf-8")
+    try:
+        events_path, events_fh = open_events_file(result_output)
+    except OSError as exc:
+        base.update(
+            {
+                "status": "failed",
+                "exit_code": EXIT_FAILED,
+                "duration_seconds": round(time.monotonic() - started, 3),
+                "finished_at": utc_now(),
+                "error": f"cannot open verifier event sidecar: {exc}",
+            }
+        )
+        try:
+            write_result(base, result_output)
+        except OSError as output_exc:
+            base["error"] += f"; cannot write result output: {output_exc}"
+            write_result(base, "-")
+        return EXIT_FAILED
+    base["events_file"] = str(events_path)
 
     try:
         process = subprocess.Popen(
@@ -533,13 +858,14 @@ def run(args: argparse.Namespace) -> int:
                 "error": f"could not start verifier CLI: {exc}",
             }
         )
-        write_result(base, args.output)
+        events_fh.close()
+        write_result(base, result_output)
         return EXIT_FAILED
 
     def read_events() -> str:
         events_fh.flush()
         try:
-            with open(events_path, encoding="utf-8") as fh:
+            with events_path.open(encoding="utf-8") as fh:
                 return fh.read()
         except OSError:
             return ""
@@ -561,7 +887,8 @@ def run(args: argparse.Namespace) -> int:
                 "error": "verifier exceeded the hard timeout; the gate did not run",
             }
         )
-        write_result(base, args.output)
+        events_fh.close()
+        write_result(base, result_output)
         return EXIT_TIMEOUT
 
     base.update(
@@ -580,7 +907,8 @@ def run(args: argparse.Namespace) -> int:
                 "error": "verifier CLI exited nonzero; the gate did not run",
             }
         )
-        write_result(base, args.output)
+        events_fh.close()
+        write_result(base, result_output)
         return EXIT_FAILED
 
     events_fh.close()
@@ -593,7 +921,7 @@ def run(args: argparse.Namespace) -> int:
     base["status"] = "completed"
     if stderr.strip():
         base["stderr_excerpt"] = excerpt(stderr)
-    write_result(base, args.output)
+    write_result(base, result_output)
     return 0
 
 

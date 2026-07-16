@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -59,6 +61,8 @@ class RunnerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name)
+        self.audited = self.base / "audited"
+        self.audited.mkdir()
         self.bin = self.base / "bin"
         self.bin.mkdir()
         (self.bin / "python3").symlink_to(sys.executable)
@@ -96,7 +100,7 @@ class RunnerTests(unittest.TestCase):
                 "--gate",
                 "plan",
                 "--cwd",
-                str(self.base),
+                str(self.audited),
                 "--prompt",
                 "Check README.md against the plan.",
                 "--output",
@@ -127,8 +131,290 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result["requested_effort"], "xhigh")
         self.assertIn("--safe-mode", invocation["argv"])
         self.assertIn("Read,Glob,Grep", invocation["argv"])
+        permission_index = invocation["argv"].index("--permission-mode")
+        self.assertEqual(invocation["argv"][permission_index + 1], "plan")
+        self.assertNotIn("Bash", invocation["argv"])
+        self.assertFalse(result["readonly_shell"]["enabled"])
         self.assertFalse(invocation["has_claudecode"])
         self.assertIn("OVERALL VERDICT: PASS", result["response"])
+
+    def test_stdout_result_keeps_event_sidecar_outside_cwd(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(RUNNER),
+                "--author",
+                "codex",
+                "--verifier",
+                "auto",
+                "--gate",
+                "plan",
+                "--cwd",
+                str(self.audited),
+                "--prompt",
+                "Check the plan.",
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env(),
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        events = Path(result["events_file"])
+        self.addCleanup(events.unlink, missing_ok=True)
+        self.assertTrue(events.is_file())
+        self.assertNotEqual(events.parent, self.audited)
+        self.assertFalse((self.audited / "-.events.jsonl").exists())
+
+    def test_claude_readonly_shell_is_exact_sandboxed_and_attributed(self) -> None:
+        commands = [
+            "git status --short",
+            "python3 -m pytest -p no:cacheprovider -q tests/test_example.py",
+        ]
+        completed = self.run_runner(
+            "codex",
+            "--allow-readonly-shell",
+            "--shell-command",
+            commands[0],
+            "--shell-command",
+            commands[1],
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = self.result()
+        invocation = self.invocation()
+        permission_index = invocation["argv"].index("--permission-mode")
+        self.assertEqual(invocation["argv"][permission_index + 1], "dontAsk")
+        self.assertIn("Read,Glob,Grep,Bash", invocation["argv"])
+        self.assertIn(f"Bash({commands[0]})", invocation["argv"])
+        self.assertIn(f"Bash({commands[1]})", invocation["argv"])
+        self.assertIn("--strict-mcp-config", invocation["argv"])
+        settings_index = invocation["argv"].index("--settings")
+        settings = json.loads(invocation["argv"][settings_index + 1])
+        sandbox = settings["sandbox"]
+        self.assertTrue(sandbox["enabled"])
+        self.assertFalse(sandbox["autoAllowBashIfSandboxed"])
+        self.assertTrue(sandbox["failIfUnavailable"])
+        self.assertFalse(sandbox["allowUnsandboxedCommands"])
+        self.assertEqual(
+            sandbox["filesystem"]["denyWrite"], [str(self.audited.resolve())]
+        )
+        self.assertEqual(result["readonly_shell"]["allowed_commands"], commands)
+        self.assertEqual(
+            result["readonly_shell"]["deny_write"], [str(self.audited.resolve())]
+        )
+        self.assertIn(
+            "The Bash tool already returns stdout, stderr, and exit status",
+            invocation["stdin"],
+        )
+        self.assertIn("Never append", invocation["stdin"])
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS Seatbelt only")
+    def test_macos_seatbelt_command_is_wrapped_and_native_excluded(self) -> None:
+        requested = (
+            "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider "
+            "-q tests/test_browser.py"
+        )
+        completed = self.run_runner(
+            "codex",
+            "--allow-readonly-shell",
+            "--macos-seatbelt-command",
+            requested,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = self.result()
+        invocation = self.invocation()
+        entries = result["readonly_shell"]["macos_seatbelt_commands"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["requested"], requested)
+        wrapper = entries[0]["wrapper"]
+        self.assertIn("run_macos_seatbelt.py", wrapper)
+        self.assertIn(f"Bash({wrapper})", invocation["argv"])
+        settings_index = invocation["argv"].index("--settings")
+        settings = json.loads(invocation["argv"][settings_index + 1])
+        self.assertEqual(
+            settings["sandbox"]["excludedCommands"],
+            [
+                f"{shlex.join([str(Path(sys.executable).resolve()), str(ROOT / 'scripts' / 'run_macos_seatbelt.py')])} *"
+            ],
+        )
+        self.assertIn(wrapper, invocation["stdin"])
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS Seatbelt only")
+    def test_macos_seatbelt_wrapper_supports_skill_path_with_spaces(self) -> None:
+        spaced_scripts = self.base / "skill copy" / "scripts"
+        spaced_scripts.mkdir(parents=True)
+        copied_runner = spaced_scripts / "run_verifier.py"
+        copied_seatbelt = spaced_scripts / "run_macos_seatbelt.py"
+        shutil.copy2(RUNNER, copied_runner)
+        shutil.copy2(ROOT / "scripts" / "run_macos_seatbelt.py", copied_seatbelt)
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(copied_runner),
+                "--author",
+                "codex",
+                "--verifier",
+                "auto",
+                "--gate",
+                "result",
+                "--cwd",
+                str(self.audited),
+                "--prompt",
+                "Check the result.",
+                "--output",
+                str(self.output),
+                "--allow-readonly-shell",
+                "--macos-seatbelt-command",
+                "python3 -m pytest -q tests/test_browser.py",
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env(),
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        invocation = self.invocation()
+        settings_index = invocation["argv"].index("--settings")
+        settings = json.loads(invocation["argv"][settings_index + 1])
+        prefix = shlex.join(
+            [str(Path(sys.executable).resolve()), str(copied_seatbelt.resolve())]
+        )
+        self.assertEqual(
+            settings["sandbox"]["excludedCommands"],
+            [f"{prefix} *"],
+        )
+        self.assertTrue(
+            any(
+                value.startswith(f"Bash({prefix} ")
+                for value in invocation["argv"]
+            )
+        )
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS Seatbelt only")
+    def test_macos_seatbelt_command_rejects_nested_shell(self) -> None:
+        for command in (
+            "bash -c 'python3 -m pytest -q tests/test_browser.py'",
+            "nice bash -c 'python3 -m pytest -q tests/test_browser.py'",
+        ):
+            with self.subTest(command=command):
+                completed = self.run_runner(
+                    "codex",
+                    "--allow-readonly-shell",
+                    "--macos-seatbelt-command",
+                    command,
+                )
+                self.assertEqual(completed.returncode, 3)
+                self.assertIn("cannot include env or a shell", self.result()["error"])
+                self.assertFalse(self.log.exists())
+
+    def test_readonly_shell_requires_result_output_outside_cwd(self) -> None:
+        inside = self.audited / "result.json"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(RUNNER),
+                "--author",
+                "codex",
+                "--verifier",
+                "auto",
+                "--gate",
+                "result",
+                "--cwd",
+                str(self.audited),
+                "--prompt",
+                "Check the result.",
+                "--output",
+                str(inside),
+                "--allow-readonly-shell",
+                "--shell-command",
+                "git status --short",
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env(),
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 3)
+        self.assertFalse(inside.exists())
+        self.assertFalse((Path(f"{inside}.events.jsonl")).exists())
+        self.assertFalse(self.log.exists())
+        self.assertIn("outside the deny-write cwd", completed.stdout)
+
+    def test_event_sidecar_failure_overwrites_stale_result(self) -> None:
+        self.output.write_text(
+            '{"status":"completed","response":"OVERALL VERDICT: PASS"}\n',
+            encoding="utf-8",
+        )
+        Path(f"{self.output}.events.jsonl").mkdir()
+        completed = self.run_runner("codex")
+        self.assertEqual(completed.returncode, 1)
+        result = self.result()
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("cannot open verifier event sidecar", result["error"])
+        self.assertFalse(self.log.exists())
+
+    def test_macos_seatbelt_command_requires_readonly_shell_opt_in(self) -> None:
+        completed = self.run_runner(
+            "codex",
+            "--macos-seatbelt-command",
+            "python3 -m pytest -q tests/test_browser.py",
+        )
+        self.assertEqual(completed.returncode, 3)
+        self.assertIn("requires explicit", self.result()["error"])
+        self.assertFalse(self.log.exists())
+
+    def test_readonly_shell_fails_closed_without_exact_commands(self) -> None:
+        completed = self.run_runner("codex", "--allow-readonly-shell")
+        self.assertEqual(completed.returncode, 3)
+        self.assertIn("requires at least one", self.result()["error"])
+        self.assertFalse(self.log.exists())
+
+    def test_shell_command_requires_explicit_opt_in(self) -> None:
+        completed = self.run_runner(
+            "codex", "--shell-command", "git status --short"
+        )
+        self.assertEqual(completed.returncode, 3)
+        self.assertIn("requires explicit", self.result()["error"])
+        self.assertFalse(self.log.exists())
+
+    def test_readonly_shell_rejects_compound_commands(self) -> None:
+        completed = self.run_runner(
+            "codex",
+            "--allow-readonly-shell",
+            "--shell-command",
+            "git status --short && git push",
+        )
+        self.assertEqual(completed.returncode, 3)
+        self.assertIn("non-compound", self.result()["error"])
+        self.assertFalse(self.log.exists())
+
+    def test_readonly_shell_rejects_permission_metacharacters(self) -> None:
+        for command in (
+            "git status --short > /tmp/status.txt",
+            "python3 -m pytest tests/*",
+        ):
+            with self.subTest(command=command):
+                completed = self.run_runner(
+                    "codex",
+                    "--allow-readonly-shell",
+                    "--shell-command",
+                    command,
+                )
+                self.assertEqual(completed.returncode, 3)
+                self.assertIn("non-compound", self.result()["error"])
+                self.assertFalse(self.log.exists())
+
+    def test_readonly_shell_is_not_reapplied_to_codex_adapter(self) -> None:
+        completed = self.run_runner(
+            "claude-code",
+            "--allow-readonly-shell",
+            "--shell-command",
+            "git status --short",
+        )
+        self.assertEqual(completed.returncode, 3)
+        self.assertIn("only needed by the Claude adapter", self.result()["error"])
+        self.assertFalse(self.log.exists())
 
     def test_claude_author_preserves_original_codex_audit_route(self) -> None:
         completed = self.run_runner(

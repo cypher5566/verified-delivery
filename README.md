@@ -122,6 +122,42 @@ python3 scripts/run_verifier.py \
 The JSON `status: completed` means the CLI ran, not that the verifier passed the work.
 Read `response` and require an explicit, cited verdict.
 
+Claude uses Read/Glob/Grep by default. If a result gate is blocked only because the
+independent verifier must rerun deterministic evidence, opt in to exact commands:
+
+```bash
+python3 scripts/run_verifier.py \
+  --author codex \
+  --verifier claude \
+  --gate result \
+  --cwd /path/to/common-parent \
+  --prompt-file /tmp/result-gate.md \
+  --output /tmp/result-gate.json \
+  --allow-readonly-shell \
+  --shell-command 'git status --short' \
+  --shell-command 'git diff --check'
+```
+
+The runner uses `dontAsk` plus exact approvals and Claude's native OS sandbox. The
+entire `cwd` is deny-write, sandbox startup is mandatory, unsandboxed fallback is off,
+and shell separators, redirects, substitutions, and the `*` permission wildcard are
+rejected. This keeps evidence reproduction independent without turning the verifier
+into a coding agent. In this mode, `--output` is mandatory and must be outside `cwd`;
+the result and its live `.events.jsonl` sidecar therefore cannot alter the audited tree.
+
+“Read-only” here means the audited `cwd`, not every external system. Approve only
+semantically read-only checks: the sandbox cannot stop an exact `adb`, database, cloud,
+or network command from mutating its remote target. Keep those commands query-only.
+
+On macOS, Chromium may need Mach IPC that Claude's native Bash sandbox denies. Put only
+the affected Playwright command behind `--macos-seatbelt-command`. The bundled wrapper
+runs argv-only (no shell), excludes only itself from the native sandbox, and immediately
+reapplies a fixed Seatbelt profile with the same full-`cwd` deny-write boundary. The
+runner records the requested command and generated wrapper and fails closed if Seatbelt
+is unavailable. It rejects nested shell interpreters. The wrapper may use ordinary host
+resources outside `cwd` so Chromium can start; use it only for trusted deterministic
+browser checks, never as a host- or device-wide read-only boundary.
+
 ## Configuration
 
 Command-line options override these environment defaults:

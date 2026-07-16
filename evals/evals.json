@@ -19,7 +19,7 @@
       "files": [],
       "expectations": [
         "Codex or OpenAI authors route to the Claude adapter",
-        "Claude runs in safe mode with plan permission and read-only tools",
+        "Claude defaults to safe mode with plan permission and Read/Glob/Grep",
         "The audit result records the actual Claude model and prompt hash"
       ]
     },
@@ -32,6 +32,21 @@
         "Arbitrary upstream coding-agent names are accepted when their actual model provider is known",
         "Third-party authors prefer Codex and can use Claude when Codex is not installed",
         "Runtime verifier failure does not trigger a silent retry or provider fallback"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "The independent Claude result gate says the code is correct but stays PARTIAL because it cannot rerun tests, hashes, or git drift. Close that evidence gap without letting the verifier modify the repository.",
+      "expected_output": "The workflow uses the explicit Claude read-only-shell profile with exact non-compound commands, OS-level cwd deny-write, mandatory sandbox startup, and no unsandboxed fallback, then requires a fresh whole-result verdict.",
+      "files": [],
+      "expectations": [
+        "The default no-Bash adapter is not silently weakened",
+        "Each deterministic check is explicitly approved as one exact command",
+        "Claude runs in dontAsk with the native sandbox and cwd deny-write",
+        "A macOS Playwright Mach-IPC failure uses only the fixed argv-only Seatbelt wrapper",
+        "Result and event artifacts remain outside the deny-write cwd",
+        "The cwd boundary is not misrepresented as host- or device-wide read-only protection",
+        "Sandbox failure or an unavailable command keeps Gate 2 closed"
       ]
     }
   ]

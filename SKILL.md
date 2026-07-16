@@ -119,6 +119,37 @@ python3 <skill-root>/scripts/run_verifier.py \
   --output <gate-2-result.json>
 ```
 
+Claude verification is source-read-only by default. If Gate 2 stays non-passing solely
+because Claude must reproduce deterministic commands rather than read their artifacts,
+rerun with the explicit evidence profile:
+
+```bash
+  --allow-readonly-shell \
+  --shell-command 'git status --short' \
+  --shell-command 'git diff --check' \
+  --shell-command 'python3 -m pytest -p no:cacheprovider -q <frozen-tests>'
+```
+
+Use one exact, non-compound command per flag and include cache/bytecode-off options where
+needed. Shell separators, redirects, substitutions, and the `*` permission wildcard are
+rejected. The runner changes Claude to `dontAsk`, deny-writes the entire `cwd` through
+the native OS sandbox, requires sandbox startup, and disables unsandboxed fallback. This
+is an evidence-reproduction escape hatch, not a broader authoring mode; keep it off when
+readable artifacts are sufficient. Put `--output` outside `cwd`; the runner rejects
+stdout-only or in-tree result/event artifacts in this mode.
+
+The boundary protects the audited `cwd`, not a remote device, database, API, or every
+host path. Approve only semantically read-only commands and keep ADB/database/cloud
+checks query-only.
+
+If a macOS Playwright command alone fails because Claude's native sandbox blocks
+Chromium Mach IPC, pass that one exact command as `--macos-seatbelt-command` instead.
+The runner uses a bundled argv-only wrapper and a fixed external Seatbelt profile that
+still deny-writes the full `cwd`; it records both requested argv and wrapper and rejects
+nested shell interpreters. Chromium may still use host resources outside `cwd`, so only
+approve trusted deterministic browser tests. Never reclassify a browser-launch sandbox
+failure as a product pass.
+
 Fix every correctness flag and add a check for each fix. Rerun deterministic checks
 and Gate 2 until both pass. Integrate only within the user's authorization and the
 team's convention. Commit is not deploy; state plainly whether the change is local,
