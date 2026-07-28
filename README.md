@@ -185,15 +185,21 @@ Put any materialized diff artifact outside every fingerprinted repo under the re
 common `cwd`, or create it at an explicitly ignored path before the first fingerprint.
 An untracked artifact created between fingerprints is candidate drift.
 
+Build a bounded Result Gate packet: map each acceptance criterion to the smallest useful
+set of production files, tests, and evidence artifacts; provide exact identifiers or
+line ranges where practical; summarize large logs; and state non-goals. This lets the
+verifier spend its fixed time attacking fragile assumptions and composing a durable
+report instead of rediscovering the review surface.
+
 Require the verifier to classify findings as `BLOCKING` or `NON-BLOCKING`. PASS can
 carry non-blocking hardening ideas into a follow-up. If result verification has not
 converged after two attempts, diagnose evidence gaps, real defects, scope creep, or
 inconsistent judgment before making another edit.
 
 Claude uses `dontAsk` with only Read/Glob/Grep allowed by default. This avoids Claude's
-special plan-transition channel without exposing write or shell tools. If a result
-gate is blocked only because the independent verifier must rerun deterministic
-evidence, opt in to exact commands:
+special plan-transition channel without exposing write or shell tools. For a Git-backed
+Result Gate that requires independent candidate-freshness, hash, or deterministic-test
+checks, opt in to exact commands on the first attempt:
 
 ```bash
 python3 scripts/run_verifier.py \
@@ -212,7 +218,9 @@ The runner uses `dontAsk` plus exact approvals and Claude's native OS sandbox. T
 entire `cwd` is deny-write, sandbox startup is mandatory, unsandboxed fallback is off,
 and shell separators, redirects, substitutions, and the `*` permission wildcard are
 rejected. This keeps evidence reproduction independent without turning the verifier
-into a coding agent. In this mode, `--output` is mandatory and must be outside `cwd`;
+into a coding agent. Keep the smaller no-shell profile for Plan Gates and Result Gates
+with sufficient candidate-bound readable artifacts. In shell mode, `--output` is
+mandatory and must be outside `cwd`;
 the result and its live `.events.jsonl` sidecar therefore cannot alter the audited tree.
 
 Every real run, including the default no-shell profile, writes raw provider output to

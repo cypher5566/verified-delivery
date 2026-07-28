@@ -31,10 +31,11 @@ Gate 2, but outside every fingerprinted repo (or at an explicitly ignored path b
 the first fingerprint). This keeps the evidence readable without changing the candidate
 fingerprint.
 
-When a result gate cannot pass because the verifier must independently reproduce hashes,
-Git drift, or deterministic tests, opt in with `--allow-readonly-shell` and repeat one
-exact `--shell-command` per check. This changes the Claude permission mode to `dontAsk`,
-adds only those exact Bash approvals, and enables Claude's native OS sandbox with:
+For a Git-backed Result Gate whose PASS requires independent reproduction of hashes,
+Git drift, or deterministic tests, opt in on the first attempt with
+`--allow-readonly-shell` and repeat one exact `--shell-command` per check. This changes
+the Claude permission mode to `dontAsk`, adds only those exact Bash approvals, and
+enables Claude's native OS sandbox with:
 
 - the entire `--cwd` tree deny-write;
 - `autoAllowBashIfSandboxed: false`;
@@ -43,9 +44,17 @@ adds only those exact Bash approvals, and enables Claude's native OS sandbox wit
 
 Shell separators, redirects, substitutions, and the `*` permission wildcard are
 rejected. Keep pytest caches and bytecode disabled because the audited tree is genuinely
-read-only. The profile is opt-in so normal source review keeps the smaller Read/Glob/Grep
-surface. `--output` must resolve outside `cwd`, which also keeps the raw events sidecar
-outside the audited tree.
+read-only. The profile remains opt-in: Plan Gates and Result Gates with sufficient
+candidate-bound readable artifacts keep the smaller Read/Glob/Grep surface. `--output`
+must resolve outside `cwd`, which also keeps the raw events sidecar outside the audited
+tree.
+
+Give the verifier a bounded review packet: acceptance criteria, source routing,
+candidate fingerprint, exact test evidence, prior blocking findings, and explicit
+non-goals. Prefer identifiers and focused ranges over invitations to read every changed
+file or an entire large log. The runner's convergence guard uses roughly 20 evidence
+tool calls as a synthesis checkpoint; unresolved material uncertainty becomes PARTIAL
+instead of consuming the report budget until timeout.
 
 The bundled `scripts/candidate_fingerprint.py` is a suitable exact command: it reads
 Git metadata and file content to hash HEAD, index, staged/unstaged changes, and

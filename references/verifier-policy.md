@@ -73,15 +73,25 @@ test/build evidence to it. Require findings to be classified `BLOCKING` or
 `NON-BLOCKING`; PASS may contain non-blocking follow-ups, while PARTIAL is reserved for
 material uncertainty.
 
+For Result Gates, route each acceptance criterion to the smallest useful set of
+production files, tests, and evidence artifacts. Include exact identifiers or line
+ranges where practical, summarize large logs, and state non-goals. The verifier should
+stop gathering optional evidence once a claim can be classified and reserve time for
+the complete report; unresolved material evidence is PARTIAL, not a reason to read until
+the hard timeout.
+
 Claude source audits default to `dontAsk` with only Read/Glob/Grep allowed; this avoids
 Claude's plan-transition channel while exposing no write or shell tool. If a result
-gate specifically requires independent command reproduction, the caller may opt in to
-the runner's read-only shell profile with one exact, non-compound command per approval.
+gate on a Git-backed candidate specifically requires independent freshness, hash, or
+command reproduction, the caller should opt in on the first attempt to the runner's
+read-only shell profile with one exact, non-compound command per approval.
 Separators, redirects,
 substitutions, and the `*` permission wildcard are rejected. The profile is fail-closed:
 Claude runs in `dontAsk`, the full `cwd` is OS-level deny-write, sandbox startup must
 succeed, and unsandboxed retry is disabled. This is evidence execution, not permission
-to modify the target. The result path and live event sidecar must resolve outside `cwd`.
+to modify the target. Plan Gates and Result Gates with sufficient candidate-bound
+readable artifacts retain the smaller no-shell profile. The result path and live event
+sidecar must resolve outside `cwd`.
 
 The invariant is scoped to the audited tree. Exact ADB, database, cloud, or network
 commands can still mutate external targets, so approve only semantically read-only

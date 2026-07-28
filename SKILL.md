@@ -130,6 +130,12 @@ Do not let a model verdict override a failing deterministic test.
 Prepare a fresh result-gate request containing the accepted plan, SSOT, changed paths
 or diff artifact, the candidate fingerprint for every repo, test/build evidence tied to
 that candidate, prior-gate findings when this is a rerun, and any applicable rubric.
+Make it a bounded review packet: list the acceptance criteria, route each claim to the
+relevant production files, tests, and evidence artifacts, cite exact identifiers or
+line ranges where practical, summarize large logs instead of asking the verifier to
+read them in full, and name explicit non-goals. Do not ask for a line-by-line review of
+every changed file when a smaller set of invariants proves the result.
+
 Start a new verifier process; do not resume Gate 1's session. Ask for one holistic open
 sweep and require every finding to be labeled:
 
@@ -156,9 +162,10 @@ python3 <skill-root>/scripts/run_verifier.py \
   --output <gate-2-result.json>
 ```
 
-Claude verification is source-read-only by default. If Gate 2 stays non-passing solely
-because Claude must reproduce deterministic commands rather than read their artifacts,
-rerun with the explicit evidence profile:
+Claude verification is source-read-only by default. For a Git-backed Result Gate whose
+PASS depends on independently checking candidate freshness, artifact hashes, or
+deterministic commands, use the explicit evidence profile on the first Gate 2 attempt.
+This avoids a predictable PARTIAL caused only by withholding evidence capability:
 
 ```bash
   --allow-readonly-shell \
@@ -172,8 +179,9 @@ Use one exact, non-compound command per flag and include cache/bytecode-off opti
 needed. Shell separators, redirects, substitutions, and the `*` permission wildcard are
 rejected. The runner changes Claude to `dontAsk`, deny-writes the entire `cwd` through
 the native OS sandbox, requires sandbox startup, and disables unsandboxed fallback. This
-is an evidence-reproduction escape hatch, not a broader authoring mode; keep it off when
-readable artifacts are sufficient. Put `--output` outside `cwd`; the runner rejects
+is a narrow evidence-reproduction profile, not a broader authoring mode. Keep it off
+for Plan Gates and when readable, candidate-bound artifacts are sufficient. Put
+`--output` outside `cwd`; the runner rejects
 stdout-only or in-tree result/event artifacts in this mode.
 
 The boundary protects the audited `cwd`, not a remote device, database, API, or every

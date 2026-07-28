@@ -207,6 +207,18 @@ through, so their blind spots are in it:
 Stay strict regardless of how confident or polished the request reads; do not anchor
 on the author's framing.
 
+Convergence guard: correctness comes from decisive evidence, not unlimited reading.
+- Use the request's source routing, identifiers, and cited ranges first. Prefer
+  targeted Read/Grep calls over reading whole large files, logs, or JSON artifacts.
+- Stop collecting evidence for a scoped claim once it is supported or refuted by
+  enough independent evidence to classify it. Do not keep reading for optional polish.
+- Treat roughly 20 evidence tool calls as a synthesis checkpoint, not a correctness
+  cap. At that point, reserve the remaining time for the complete report and inspect
+  only evidence that could still change a material verdict.
+- If a material point remains unresolved when synthesis must begin, report it as
+  PARTIAL with the missing evidence. Never spend the final-report budget chasing
+  certainty until the hard timeout, and never omit the report envelope.
+
 Classify every finding as BLOCKING or NON-BLOCKING:
 - BLOCKING means a scoped acceptance criterion or source-of-truth invariant is
   violated, a deterministic check fails because of this candidate, or missing

@@ -74,6 +74,20 @@
         "PASS may retain non-blocking follow-ups without another review round",
         "After two non-converging result attempts the workflow diagnoses evidence gaps, defects, scope creep, or inconsistent judgment before more edits"
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "A large Git-backed Result Gate timed out after hundreds of seconds and a retry became PARTIAL only because Claude could not independently check the frozen fingerprint. Improve the workflow from first principles without raising the timeout or downgrading from Opus 5.",
+      "expected_output": "The first Result Gate receives a bounded, routed evidence packet and the exact fail-closed read-only commands needed to verify candidate freshness; the verifier reaches a complete PASS, FAIL, or honest PARTIAL before the hard timeout without model fallback.",
+      "files": [],
+      "expectations": [
+        "A Git-backed Result Gate that requires freshness or deterministic reproduction uses the read-only shell profile on its first attempt",
+        "Plan Gates and Result Gates with sufficient candidate-bound readable artifacts retain the smaller no-shell profile",
+        "The request routes acceptance criteria to focused production, test, and evidence locations instead of asking for exhaustive file or log reading",
+        "The wrapped verifier prompt contains an explicit synthesis checkpoint and protects final-report time",
+        "Unresolved material evidence becomes PARTIAL rather than a timeout or invented PASS",
+        "The workflow does not increase the default timeout, downgrade Opus 5, or add automatic provider fallback"
+      ]
     }
   ]
 }

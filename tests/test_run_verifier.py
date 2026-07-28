@@ -165,6 +165,15 @@ class RunnerTests(unittest.TestCase):
         )
         self.assertIn("evidence-freshness guard", invocation["stdin"])
         self.assertIn("multi-repo delivery was omitted", invocation["stdin"])
+        self.assertIn("Convergence guard", invocation["stdin"])
+        self.assertIn(
+            "roughly 20 evidence tool calls as a synthesis checkpoint",
+            invocation["stdin"],
+        )
+        self.assertIn(
+            "Never spend the final-report budget chasing",
+            invocation["stdin"],
+        )
 
     def test_nonpassing_verdict_closes_process_gate_but_preserves_report(self) -> None:
         for verdict in ("FAIL", "PARTIAL"):
@@ -401,10 +410,7 @@ class RunnerTests(unittest.TestCase):
             [f"{prefix} *"],
         )
         self.assertTrue(
-            any(
-                value.startswith(f"Bash({prefix} ")
-                for value in invocation["argv"]
-            )
+            any(value.startswith(f"Bash({prefix} ") for value in invocation["argv"])
         )
 
     @unittest.skipUnless(sys.platform == "darwin", "macOS Seatbelt only")
@@ -487,9 +493,7 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(self.log.exists())
 
     def test_shell_command_requires_explicit_opt_in(self) -> None:
-        completed = self.run_runner(
-            "codex", "--shell-command", "git status --short"
-        )
+        completed = self.run_runner("codex", "--shell-command", "git status --short")
         self.assertEqual(completed.returncode, 3)
         self.assertIn("requires explicit", self.result()["error"])
         self.assertFalse(self.log.exists())
