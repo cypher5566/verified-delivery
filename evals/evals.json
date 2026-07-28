@@ -15,12 +15,13 @@
     {
       "id": 2,
       "prompt": "I'm using Codex for a schema migration. 走驗證流程，請用不同 provider 審核 plan 跟最後 diff。",
-      "expected_output": "The workflow identifies Codex as the author and selects Claude Opus 4.8 at xhigh effort as the independent verifier.",
+      "expected_output": "The workflow identifies Codex as the author and selects Claude Opus 5 at xhigh effort as the independent verifier.",
       "files": [],
       "expectations": [
         "Codex or OpenAI authors route to the Claude adapter",
-        "Claude defaults to safe mode with plan permission and Read/Glob/Grep",
-        "The audit result records the actual Claude model and prompt hash"
+        "Claude defaults to safe mode with dontAsk and only Read/Glob/Grep allowed",
+        "The audit result records the actual Claude model, prompt hash, and complete-report validation",
+        "A plan-transition-only or summary-only final response fails closed"
       ]
     },
     {
@@ -47,6 +48,31 @@
         "Result and event artifacts remain outside the deny-write cwd",
         "The cwd boundary is not misrepresented as host- or device-wide read-only protection",
         "Sandbox failure or an unavailable command keeps Gate 2 closed"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "The verifier process exited 0, but its saved result only says 'the full verdict is above' and the detailed findings are missing. Treat this safely and make the report durable.",
+      "expected_output": "The workflow fails the gate closed, preserves the incomplete response for diagnosis, avoids Claude plan mode, and requires a complete final report envelope with one overall verdict before status can be completed.",
+      "files": [],
+      "expectations": [
+        "A provider exit code of zero is insufficient when the report envelope is missing",
+        "The incomplete response is preserved while status becomes failed",
+        "Claude source audits use dontAsk with only read tools and ExitPlanMode denied",
+        "Both Claude and Codex reports require the same final envelope and overall verdict"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "The result verifier returned a complete PARTIAL report, and an earlier build passed before I made one final source edit across a second repo. Decide whether CI may continue and close the gate with the fewest useful review rounds.",
+      "expected_output": "The runner preserves the report but exits nonzero, invalidates evidence from the older candidate, verifies every repo, separates blocking uncertainty from non-blocking polish, and reruns only after evidence or candidate correction.",
+      "files": [],
+      "expectations": [
+        "A structurally complete FAIL or PARTIAL report exits 4 and cannot be mistaken for a passing gate",
+        "The bundled read-only helper ties final deterministic evidence to a frozen candidate fingerprint for every repo",
+        "Source or contract edits invalidate evidence produced by an older candidate",
+        "PASS may retain non-blocking follow-ups without another review round",
+        "After two non-converging result attempts the workflow diagnoses evidence gaps, defects, scope creep, or inconsistent judgment before more edits"
       ]
     }
   ]

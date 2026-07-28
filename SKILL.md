@@ -59,7 +59,9 @@ facts supported by the SSOT from genuine uncertainties such as defaults, orderin
 edge cases, timing, double-fire behavior, gating, and target-system differences.
 
 Tag the requested batch `do now`, `defer`, or `N/A`. Verify assumptions about the
-target too: a derived view is not automatically the underlying business fact.
+target too: a derived view is not automatically the underlying business fact. State
+the acceptance criteria, invariants, and explicit non-goals before Gate 1. This gives
+the verifier a materiality boundary: strict on correctness, quiet about optional polish.
 
 ### 2. Gate 1: verify the plan
 
@@ -88,9 +90,13 @@ python3 <skill-root>/scripts/run_verifier.py \
   --output <gate-1-result.json>
 ```
 
-`status: completed` means only that the verifier CLI ran successfully. Read `response`
-and require an explicit passing verdict supported by citations. Fold every correction
-into the plan before writing the implementation.
+`status: completed` means only that the verifier CLI returned a complete report. Read
+`response` and require an explicit passing verdict supported by citations. The runner
+also records `report_validation`; a missing report envelope or overall verdict fails
+closed even when the provider exits successfully. `reported_gate_passed` is true only
+for an explicit `PASS`; `FAIL` and `PARTIAL` preserve the complete report but exit 4 so
+automation cannot mistake a finished review for an open gate. Fold every blocking
+correction into the plan before writing the implementation.
 
 ### 3. Build and self-check
 
@@ -100,13 +106,44 @@ Mirror the SSOT and deviate only for a documented reason. Check the result yours
 - data: rerun the query and reconcile against the SSOT rather than a cache;
 - both: record deterministic evidence and remaining uncertainty.
 
+Freeze the intended candidate before final evidence. For every repo in scope, record a
+candidate fingerprint: remote + HEAD, staged/unstaged diff identity, and untracked-file
+state. Then run final tests/builds and record exact commands, exit status, and artifact
+hashes against that fingerprint. A source or contract change invalidates older evidence;
+rerun affected checks instead of carrying a green result forward.
+
+Generate the fingerprint without changing the worktree:
+
+```bash
+python3 <skill-root>/scripts/candidate_fingerprint.py --repo <repo>
+```
+
+Run it once immediately before final deterministic checks and again when preparing
+Gate 2; the `candidate_sha256` values must match. Repeat it for every repo in scope.
+Treat each relevant or dirty Git submodule as a separate in-scope repo: the parent
+fingerprint records its gitlink and dirty marker, not the identity of internal changes.
+
 Do not let a model verdict override a failing deterministic test.
 
 ### 4. Gate 2: verify the result
 
 Prepare a fresh result-gate request containing the accepted plan, SSOT, changed paths
-or diff artifact, test evidence, and any applicable rubric. Start a new verifier
-process; do not resume Gate 1's session.
+or diff artifact, the candidate fingerprint for every repo, test/build evidence tied to
+that candidate, prior-gate findings when this is a rerun, and any applicable rubric.
+Start a new verifier process; do not resume Gate 1's session. Ask for one holistic open
+sweep and require every finding to be labeled:
+
+- `BLOCKING`: violates a scoped acceptance criterion/invariant, is a candidate-caused
+  deterministic failure, or is missing evidence that could change correctness;
+- `NON-BLOCKING`: hardening, maintainability, polish, or follow-up outside scope.
+
+`PASS` may include non-blocking findings. `PARTIAL` is for material uncertainty, not a
+wishlist. This preserves strictness without creating endless polish rounds.
+
+If the verifier needs a materialized diff artifact, create it before the first
+fingerprint either outside every fingerprinted repo under the readable common `cwd`,
+or at an explicitly ignored path. Never add an untracked artifact inside a fingerprinted
+repo between the two fingerprint runs; the artifact itself would create candidate drift.
 
 ```bash
 python3 <skill-root>/scripts/run_verifier.py \
@@ -125,8 +162,9 @@ rerun with the explicit evidence profile:
 
 ```bash
   --allow-readonly-shell \
-  --shell-command 'git status --short' \
-  --shell-command 'git diff --check' \
+  --shell-command 'git -C /absolute/target-repo status --short' \
+  --shell-command 'git -C /absolute/ssot-repo status --short' \
+  --shell-command 'git -C /absolute/target-repo diff --check' \
   --shell-command 'python3 -m pytest -p no:cacheprovider -q <frozen-tests>'
 ```
 
@@ -150,10 +188,20 @@ nested shell interpreters. Chromium may still use host resources outside `cwd`, 
 approve trusted deterministic browser tests. Never reclassify a browser-launch sandbox
 failure as a product pass.
 
-Fix every correctness flag and add a check for each fix. Rerun deterministic checks
-and Gate 2 until both pass. Integrate only within the user's authorization and the
-team's convention. Commit is not deploy; state plainly whether the change is local,
-committed, pushed, deployed, or merely reviewed.
+Fix every blocking correctness flag and add a check for each fix. Defer non-blocking
+findings by default once the candidate has passed; implementing them mutates the
+candidate and legitimately requires fresh evidence and Gate 2. The normal path is one
+Plan Gate and one Result Gate. Rerun Gate 2 only after a non-passing verdict or a
+candidate/contract change.
+
+If Gate 2 has not converged after two attempts, pause before another code edit and
+classify the cause: incomplete evidence, a genuine implementation defect, scope creep
+from non-blocking polish, or inconsistent verifier judgment. Fix the process input that
+caused the extra round; do not blindly keep expanding scope.
+
+Integrate only within the user's authorization and the team's convention. Commit is
+not deploy; state plainly whether the change is local, committed, pushed, deployed, or
+merely reviewed.
 
 ## Assurance rules
 
@@ -170,5 +218,13 @@ committed, pushed, deployed, or merely reviewed.
 - Do not add an automatic model fallback. A deliberate retry must name and record the
   replacement model.
 - Preserve each gate's JSON result. It records verifier, requested and observed model,
-  effort, prompt hash, duration, exit status, and response.
+  effort, prompt hash, duration, exit status, response, report validation, and whether
+  the reported verdict passed. A structurally complete `FAIL`/`PARTIAL` exits 4.
 - Treat `timed_out`, `failed`, missing citations, and ambiguous responses as non-passing.
+- Require each Result Gate to cover all repos and the exact candidate that produced its
+  deterministic evidence. Passing evidence from an older candidate is not evidence.
+- PASS ends the gate even when the open sweep contains non-blocking follow-ups. Do not
+  churn a passing candidate merely to make the verifier's wishlist empty.
+- Never recover omitted findings from conversational context. If a verifier says its
+  report is "above", refers to an unpreserved plan transition, or omits the report
+  envelope, keep the gate closed and rerun only after fixing the verifier path.

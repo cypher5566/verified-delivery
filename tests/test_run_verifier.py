@@ -37,10 +37,17 @@ if os.environ.get("FAKE_SLEEP"):
 if os.environ.get("FAKE_EXIT"):
     print("provider failure", file=sys.stderr)
     raise SystemExit(int(os.environ["FAKE_EXIT"]))
+report = os.environ.get(
+    "FAKE_RESPONSE",
+    "<<verified-delivery-report:start>>\n"
+    "CHECK: TRUE README.md:1\n"
+    "OVERALL VERDICT: PASS\n"
+    "<<verified-delivery-report:end>>",
+)
 if provider == "claude":
     print(json.dumps({
-        "result": "CHECK: TRUE README.md:1\nOVERALL VERDICT: PASS",
-        "modelUsage": {"claude-haiku-4-5": {}, "claude-opus-4-8": {}},
+        "result": report,
+        "modelUsage": {"claude-haiku-4-5": {}, "claude-opus-5": {}},
         "usage": {"input_tokens": 10, "output_tokens": 5},
         "total_cost_usd": 0.01,
     }))
@@ -51,7 +58,7 @@ else:
     print(json.dumps(started))
     print(json.dumps({
         "type": "item.completed",
-        "item": {"type": "agent_message", "text": "CHECK: TRUE README.md:1\nOVERALL VERDICT: PASS"},
+        "item": {"type": "agent_message", "text": report},
     }))
     print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 5}}))
 """
@@ -126,17 +133,126 @@ class RunnerTests(unittest.TestCase):
         invocation = self.invocation()
         self.assertEqual(result["verifier"], "claude")
         self.assertEqual(result["assurance"], "independent")
-        self.assertEqual(result["actual_model"], "claude-opus-4-8")
-        self.assertEqual(result["models_used"], ["claude-haiku-4-5", "claude-opus-4-8"])
+        self.assertEqual(result["actual_model"], "claude-opus-5")
+        self.assertEqual(result["models_used"], ["claude-haiku-4-5", "claude-opus-5"])
         self.assertEqual(result["requested_effort"], "xhigh")
         self.assertIn("--safe-mode", invocation["argv"])
         self.assertIn("Read,Glob,Grep", invocation["argv"])
         permission_index = invocation["argv"].index("--permission-mode")
-        self.assertEqual(invocation["argv"][permission_index + 1], "plan")
-        self.assertNotIn("Bash", invocation["argv"])
+        self.assertEqual(invocation["argv"][permission_index + 1], "dontAsk")
+        tools_index = invocation["argv"].index("--tools")
+        self.assertNotIn("Bash", invocation["argv"][tools_index + 1])
+        disallowed_index = invocation["argv"].index("--disallowedTools")
+        self.assertIn("Bash", invocation["argv"][disallowed_index + 1 :])
+        self.assertIn("ExitPlanMode", invocation["argv"][disallowed_index + 1 :])
         self.assertFalse(result["readonly_shell"]["enabled"])
         self.assertFalse(invocation["has_claudecode"])
         self.assertIn("OVERALL VERDICT: PASS", result["response"])
+        self.assertTrue(result["report_validation"]["valid"])
+        self.assertEqual(result["verifier_verdict"], "PASS")
+        self.assertTrue(result["reported_gate_passed"])
+        self.assertIn(
+            "do not call exitplanmode",
+            invocation["stdin"].lower(),
+        )
+        self.assertIn(
+            "<<verified-delivery-report:start>>",
+            invocation["stdin"],
+        )
+        self.assertIn(
+            "Classify every finding as BLOCKING or NON-BLOCKING",
+            invocation["stdin"],
+        )
+        self.assertIn("evidence-freshness guard", invocation["stdin"])
+        self.assertIn("multi-repo delivery was omitted", invocation["stdin"])
+
+    def test_nonpassing_verdict_closes_process_gate_but_preserves_report(self) -> None:
+        for verdict in ("FAIL", "PARTIAL"):
+            with self.subTest(verdict=verdict):
+                report = (
+                    "<<verified-delivery-report:start>>\n"
+                    "CHECK: FALSE README.md:1\n"
+                    f"OVERALL VERDICT: {verdict}\n"
+                    "<<verified-delivery-report:end>>"
+                )
+                completed = self.run_runner(
+                    "codex",
+                    env=self.env(FAKE_RESPONSE=report),
+                )
+                self.assertEqual(completed.returncode, 4)
+                result = self.result()
+                self.assertEqual(result["status"], "completed")
+                self.assertEqual(result["verifier_verdict"], verdict)
+                self.assertFalse(result["reported_gate_passed"])
+                self.assertIn("gate remains closed", result["gate_closed_reason"])
+                self.assertEqual(result["response"], report)
+
+    def test_incomplete_claude_report_fails_closed_and_preserves_response(self) -> None:
+        incomplete = (
+            "The verdict above is my complete deliverable. "
+            "Overall: PARTIAL. Five details remain."
+        )
+        completed = self.run_runner(
+            "codex",
+            env=self.env(FAKE_RESPONSE=incomplete),
+        )
+        self.assertEqual(completed.returncode, 1)
+        result = self.result()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["response"], incomplete)
+        self.assertFalse(result["reported_gate_passed"])
+        self.assertFalse(result["report_validation"]["valid"])
+        self.assertIn("report envelope", result["error"])
+
+    def test_report_without_explicit_overall_verdict_fails_closed(self) -> None:
+        incomplete = (
+            "<<verified-delivery-report:start>>\n"
+            "CHECK: TRUE README.md:1\n"
+            "<<verified-delivery-report:end>>"
+        )
+        completed = self.run_runner(
+            "codex",
+            env=self.env(FAKE_RESPONSE=incomplete),
+        )
+        self.assertEqual(completed.returncode, 1)
+        result = self.result()
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["report_validation"]["valid"])
+        self.assertIn("overall verdict", result["error"])
+
+    def test_empty_report_body_fails_closed(self) -> None:
+        incomplete = (
+            "<<verified-delivery-report:start>>\n"
+            "OVERALL VERDICT: PASS\n"
+            "<<verified-delivery-report:end>>"
+        )
+        completed = self.run_runner(
+            "codex",
+            env=self.env(FAKE_RESPONSE=incomplete),
+        )
+        self.assertEqual(completed.returncode, 1)
+        result = self.result()
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["report_validation"]["valid"])
+        self.assertIn("report body", result["error"])
+
+    def test_markdown_wrapped_overall_verdict_is_valid(self) -> None:
+        report = (
+            "<<verified-delivery-report:start>>\n"
+            "CHECK: TRUE README.md:1\n"
+            "**OVERALL VERDICT: PASS**\n"
+            "<<verified-delivery-report:end>>"
+        )
+        completed = self.run_runner(
+            "codex",
+            env=self.env(FAKE_RESPONSE=report),
+        )
+        self.assertEqual(completed.returncode, 0)
+        result = self.result()
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(result["report_validation"]["valid"])
+        self.assertEqual(result["report_validation"]["verdict"], "PASS")
+        self.assertTrue(result["reported_gate_passed"])
 
     def test_stdout_result_keeps_event_sidecar_outside_cwd(self) -> None:
         completed = subprocess.run(
@@ -520,7 +636,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_timeout_fails_closed_and_keeps_prompt_hash(self) -> None:
         completed = self.run_runner(
-            "codex", "--timeout", "0.5", env=self.env(FAKE_SLEEP="2")
+            "codex", "--timeout", "1.5", env=self.env(FAKE_SLEEP="3")
         )
         self.assertEqual(completed.returncode, 124)
         result = self.result()
@@ -528,6 +644,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result["status"], "timed_out")
         expected_hash = hashlib.sha256(invocation["stdin"].encode("utf-8")).hexdigest()
         self.assertEqual(result["prompt_sha256"], expected_hash)
+        self.assertFalse(result["report_validation"]["valid"])
 
     def test_cli_failure_is_not_a_completed_gate(self) -> None:
         completed = self.run_runner("codex", env=self.env(FAKE_EXIT="9"))
@@ -536,6 +653,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["exit_code"], 9)
         self.assertIn("provider failure", result["stderr_excerpt"])
+        self.assertFalse(result["report_validation"]["valid"])
 
 
 if __name__ == "__main__":

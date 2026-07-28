@@ -29,7 +29,7 @@ independent verification.
 
 ## Model policy
 
-- Claude defaults to the versioned `claude-opus-4-8` model at `xhigh` effort.
+- Claude defaults to the versioned `claude-opus-5` model at `xhigh` effort.
 - Codex resolves the user's configured model and pins it for a clean invocation at
   `xhigh` reasoning effort because Codex model identifiers change independently of this skill. Set
   `VERIFIED_DELIVERY_CODEX_MODEL` or pass `--model` when a versioned identifier is
@@ -46,7 +46,7 @@ Environment defaults:
 
 ```text
 VERIFIED_DELIVERY_VERIFIER=auto|claude|codex
-VERIFIED_DELIVERY_CLAUDE_MODEL=claude-opus-4-8
+VERIFIED_DELIVERY_CLAUDE_MODEL=claude-opus-5
 VERIFIED_DELIVERY_CODEX_MODEL=<optional model id>
 VERIFIED_DELIVERY_OTHER_VERIFIER=codex|claude
 VERIFIED_DELIVERY_EFFORT=xhigh
@@ -68,10 +68,16 @@ Every gate prompt should name:
 
 Ask for a per-item `TRUE`, `FALSE`, or `PARTIAL` verdict, reasoning, and citations.
 Missing evidence must remain uncertainty rather than being guessed into a pass.
+For a result gate, include every repo's frozen candidate fingerprint and bind the
+test/build evidence to it. Require findings to be classified `BLOCKING` or
+`NON-BLOCKING`; PASS may contain non-blocking follow-ups, while PARTIAL is reserved for
+material uncertainty.
 
-Claude source audits default to Read/Glob/Grep. If a result gate specifically requires
-independent command reproduction, the caller may opt in to the runner's read-only shell
-profile with one exact, non-compound command per approval. Separators, redirects,
+Claude source audits default to `dontAsk` with only Read/Glob/Grep allowed; this avoids
+Claude's plan-transition channel while exposing no write or shell tool. If a result
+gate specifically requires independent command reproduction, the caller may opt in to
+the runner's read-only shell profile with one exact, non-compound command per approval.
+Separators, redirects,
 substitutions, and the `*` permission wildcard are rejected. The profile is fail-closed:
 Claude runs in `dontAsk`, the full `cwd` is OS-level deny-write, sandbox startup must
 succeed, and unsandboxed retry is disabled. This is evidence execution, not permission
@@ -92,14 +98,31 @@ or a host-wide read-only sandbox.
 
 The runner's `status` describes execution, not correctness:
 
-- `completed`: the verifier process exited successfully; inspect `response`.
-- `failed`: the CLI, authentication, model, or provider failed.
+- `completed`: the verifier process exited successfully and returned a structurally
+  complete report; inspect `response`. An explicit PASS exits `0`; a structurally
+  complete FAIL or PARTIAL exits `4` so shell automation keeps the gate closed.
+- `failed`: the CLI, authentication, model, provider, or final-report validation failed.
 - `timed_out`: the hard timeout ended the process.
 - `dry_run`: selection and command construction were validated, but no gate ran.
 
 Only an explicit passing response with sufficient citations can pass a gate. A failed
 or timed-out invocation, empty response, ambiguous verdict, missing SSOT, or failing
 deterministic test keeps the gate closed.
+
+Every wrapped prompt requires the full final report between
+`<<verified-delivery-report:start>>` and
+`<<verified-delivery-report:end>>`, with a substantive body and exactly one
+`OVERALL VERDICT:` line.
+The runner validates this envelope after provider parsing. A provider exit code of zero
+with a summary such as "the details are above" becomes `status: failed`; the incomplete
+response remains in the JSON for diagnosis.
+
+`report_validation` is present on every normalized payload. Before a report completes,
+or on configuration/provider/timeout failure, it is
+`{"valid": false, "verdict": null, "errors": [...]}`.
+`verifier_verdict` repeats the parsed verdict at the top level and
+`reported_gate_passed` is true only for PASS. These fields make the process outcome
+machine-readable without pretending to validate the quality of citations.
 
 ## Evidence and privacy
 

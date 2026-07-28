@@ -12,7 +12,7 @@ test against ground truth: the installed skill itself.
 
 Usage:
     python validate.py --skill verified-delivery --eval trigger-eval.example.json
-    python validate.py --skill my-skill --eval evals.json --model claude-opus-4-8 --runs 3
+    python validate.py --skill my-skill --eval evals.json --model claude-opus-5 --runs 3
 """
 
 import argparse

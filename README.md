@@ -14,7 +14,7 @@ not grading its own assumptions.
 | Upstream author | Independent verifier |
 |---|---|
 | Claude Code / Anthropic | Codex |
-| Codex / OpenAI | Claude Code (`claude-opus-4-8`, `xhigh`) |
+| Codex / OpenAI | Claude Code (`claude-opus-5`, `xhigh`) |
 | Other coding agent | Codex when installed, otherwise Claude Code |
 
 The original Claude Code → Codex workflow remains the default for Claude users. Runtime
@@ -28,6 +28,10 @@ failure never triggers a silent model or provider fallback.
 4. Build and run deterministic checks.
 5. Start a fresh verifier process to audit the result against the SSOT and plan.
 6. Treat missing evidence, timeout, CLI failure, and ambiguous verdicts as non-passing.
+
+The normal path is one plan review and one result review. A result PASS may contain
+non-blocking follow-ups; optional polish does not keep the gate open. Another result
+round is needed only when the verdict is non-passing or the candidate/contract changes.
 
 It is intentionally heavier than a normal one-shot change. Use it when being wrong is
 expensive and the error would otherwise be discovered late.
@@ -43,8 +47,10 @@ verified-delivery/
 │       ├── claude.md
 │       └── codex.md
 ├── scripts/
+│   ├── candidate_fingerprint.py
 │   └── run_verifier.py
 ├── tests/
+│   ├── test_candidate_fingerprint.py
 │   ├── test_cli_compatibility.py
 │   └── test_run_verifier.py
 └── evals/
@@ -52,9 +58,10 @@ verified-delivery/
 
 `SKILL.md` owns the provider-neutral workflow. Adapter details are progressively loaded
 only for the selected verifier. `run_verifier.py` performs provider selection, applies
-read-only flags, supplies the prompt over stdin, enforces a hard timeout, and writes a
-normalized JSON audit record. Both adapters suppress unrelated customizations; Codex's
-configured model ID is resolved first and then pinned for the clean verifier process.
+read-only flags, wraps and supplies the prompt over stdin, enforces a hard timeout,
+validates that the complete final report was preserved, and writes a normalized JSON
+audit record. Both adapters suppress unrelated customizations; Codex's configured model
+ID is resolved first and then pinned for the clean verifier process.
 
 ## Prerequisites
 
@@ -119,11 +126,74 @@ python3 scripts/run_verifier.py \
   --output /tmp/result-gate.json
 ```
 
-The JSON `status: completed` means the CLI ran, not that the verifier passed the work.
-Read `response` and require an explicit, cited verdict.
+The JSON `status: completed` means the CLI returned a structurally complete report; it
+still does not mean the verifier passed the work. The final response must use:
 
-Claude uses Read/Glob/Grep by default. If a result gate is blocked only because the
-independent verifier must rerun deterministic evidence, opt in to exact commands:
+```text
+<<verified-delivery-report:start>>
+[substantive findings and citations]
+OVERALL VERDICT: PASS|FAIL|PARTIAL
+<<verified-delivery-report:end>>
+```
+
+The envelope is anchored: no preamble may appear before the start marker and no text
+may follow the end marker. `OVERALL VERDICT:` must occupy exactly one whole line with
+only `PASS`, `FAIL`, or `PARTIAL` after the colon. A Markdown heading or paired bold
+wrapper around that line is accepted; trailing commentary on the verdict line is not.
+
+`report_validation` has the shape
+`{"valid": bool, "verdict": "PASS|FAIL|PARTIAL"|null, "errors": [...]}`.
+It checks the anchored envelope, a substantive body, and exactly one overall-verdict
+line; it does not judge whether citations or reasoning are correct. The field is
+present on success, failure, timeout, configuration error, and dry-run payloads.
+Read `response` yourself and require an explicit, cited PASS. If a verifier puts
+findings in an unpreserved plan transition or returns only "the details are above",
+the runner preserves that response but returns `status: failed`.
+
+Statuses and process exits are intentionally separate:
+
+| Status | Meaning | Process exit |
+|---|---|---:|
+| `completed` + PASS | Structurally valid passing report returned | `0` |
+| `completed` + FAIL/PARTIAL | Complete review returned; gate remains closed | `4` |
+| `failed` | Configuration, provider, CLI, or report validation failed | `1` or `3` |
+| `timed_out` | Hard timeout ended the verifier | `124` |
+| `dry_run` | Routing/command construction only; no report | `0` |
+
+Argparse usage errors use exit `2`. `verifier_verdict` records the parsed verdict and
+`reported_gate_passed` is true only for PASS. Citation quality still requires the
+author's inspection; this field prevents automation from confusing a finished review
+with a passing review.
+
+Before the final result gate, freeze the candidate and record every in-scope repo's
+remote + HEAD, staged/unstaged diff identity, and untracked-file state. Run final
+tests/builds after that freeze and attach exact commands, exit status, and artifact
+hashes. Any later source or contract edit invalidates the older evidence.
+
+The bundled helper makes that evidence deterministic and read-only:
+
+```bash
+python3 scripts/candidate_fingerprint.py --repo /absolute/repo
+```
+
+Run it immediately before final checks and again before Gate 2. Matching
+`candidate_sha256` values bind the evidence to the candidate; repeat it for every repo.
+Fingerprint relevant or dirty submodules separately because a parent fingerprint knows
+the gitlink and dirty marker, not the identity of uncommitted submodule changes.
+
+Put any materialized diff artifact outside every fingerprinted repo under the readable
+common `cwd`, or create it at an explicitly ignored path before the first fingerprint.
+An untracked artifact created between fingerprints is candidate drift.
+
+Require the verifier to classify findings as `BLOCKING` or `NON-BLOCKING`. PASS can
+carry non-blocking hardening ideas into a follow-up. If result verification has not
+converged after two attempts, diagnose evidence gaps, real defects, scope creep, or
+inconsistent judgment before making another edit.
+
+Claude uses `dontAsk` with only Read/Glob/Grep allowed by default. This avoids Claude's
+special plan-transition channel without exposing write or shell tools. If a result
+gate is blocked only because the independent verifier must rerun deterministic
+evidence, opt in to exact commands:
 
 ```bash
 python3 scripts/run_verifier.py \
@@ -134,8 +204,8 @@ python3 scripts/run_verifier.py \
   --prompt-file /tmp/result-gate.md \
   --output /tmp/result-gate.json \
   --allow-readonly-shell \
-  --shell-command 'git status --short' \
-  --shell-command 'git diff --check'
+  --shell-command 'git -C /absolute/target-repo status --short' \
+  --shell-command 'git -C /absolute/ssot-repo status --short'
 ```
 
 The runner uses `dontAsk` plus exact approvals and Claude's native OS sandbox. The
@@ -144,6 +214,10 @@ and shell separators, redirects, substitutions, and the `*` permission wildcard 
 rejected. This keeps evidence reproduction independent without turning the verifier
 into a coding agent. In this mode, `--output` is mandatory and must be outside `cwd`;
 the result and its live `.events.jsonl` sidecar therefore cannot alter the audited tree.
+
+Every real run, including the default no-shell profile, writes raw provider output to
+`<output>.events.jsonl` (or a temporary external path when output is stdout). It may
+contain the full verifier response, so protect it like the main audit JSON.
 
 “Read-only” here means the audited `cwd`, not every external system. Approve only
 semantically read-only checks: the sandbox cannot stop an exact `adb`, database, cloud,
@@ -164,7 +238,7 @@ Command-line options override these environment defaults:
 
 ```text
 VERIFIED_DELIVERY_VERIFIER=auto
-VERIFIED_DELIVERY_CLAUDE_MODEL=claude-opus-4-8
+VERIFIED_DELIVERY_CLAUDE_MODEL=claude-opus-5
 VERIFIED_DELIVERY_CODEX_MODEL=<optional versioned model>
 VERIFIED_DELIVERY_OTHER_VERIFIER=codex
 VERIFIED_DELIVERY_EFFORT=xhigh

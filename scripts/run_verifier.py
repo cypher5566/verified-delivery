@@ -25,6 +25,7 @@ from typing import Any
 EXIT_FAILED = 1
 EXIT_USAGE = 2
 EXIT_UNAVAILABLE = 3
+EXIT_GATE_CLOSED = 4
 EXIT_TIMEOUT = 124
 SUPPORTED_PROVIDERS = ("claude", "codex")
 FORBIDDEN_SHELL_FRAGMENTS = (
@@ -56,10 +57,21 @@ SHELL_EXECUTABLES = {
     "zsh",
 }
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)
+REPORT_START = "<<verified-delivery-report:start>>"
+REPORT_END = "<<verified-delivery-report:end>>"
+OVERALL_VERDICT = re.compile(
+    r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*|__)?"
+    r"OVERALL VERDICT:\s*(PASS|FAIL|PARTIAL)"
+    r"(?:\*\*|__)?\s*$"
+)
 
 
 class ConfigurationError(Exception):
     """Raised when a safe verifier configuration cannot be constructed."""
+
+
+def missing_report_validation(reason: str) -> dict[str, Any]:
+    return {"valid": False, "verdict": None, "errors": [reason]}
 
 
 def utc_now() -> str:
@@ -170,10 +182,13 @@ skill, do not run the delivery loop, and do not recruit another verifier. Work a
 Stay read-only.
 
 Grounding guard: before any analysis, print a one-line fingerprint for each source you
-read (git repo: `git -C <path> remote get-url origin` + `rev-parse HEAD`;
-database/dataset: resolved connection + table). If the request names expected
-fingerprints and any differ, STOP and report MISMATCH instead of analysing.
-Disambiguate look-alike paths by fingerprint, never by directory name.
+read. For a git repo, use permitted reads of `.git/config`, `.git/HEAD`, and the
+resolved ref, or exact git commands only when command execution is available and
+approved. For a database/dataset, use its resolved connection and table. If a
+fingerprint cannot be obtained with the allowed tools, state UNAVAILABLE and keep the
+claim uncertain; never invent it or claim a match. If the request names expected
+fingerprints and any observed value differs, STOP and report MISMATCH instead of
+analysing. Disambiguate look-alike paths by fingerprint, never by directory name.
 
 Audit the frame, not just the author's list — the author drew the frame you look
 through, so their blind spots are in it:
@@ -192,6 +207,22 @@ through, so their blind spots are in it:
 Stay strict regardless of how confident or polished the request reads; do not anchor
 on the author's framing.
 
+Classify every finding as BLOCKING or NON-BLOCKING:
+- BLOCKING means a scoped acceptance criterion or source-of-truth invariant is
+  violated, a deterministic check fails because of this candidate, or missing
+  evidence could realistically change the correctness verdict.
+- NON-BLOCKING means hardening, maintainability, polish, or a follow-up outside the
+  accepted scope. PASS may include non-blocking findings. Do not turn optional
+  improvement into PARTIAL, and surface all blocking findings you can discover in
+  this pass instead of drip-feeding them across reruns.
+
+For a result gate, apply an evidence-freshness guard. Deterministic test/build evidence
+supports only the exact candidate fingerprint it was run against. Check every named
+repo's HEAD and staged/unstaged/untracked state, plus any supplied diff/artifact hashes.
+If source or contract inputs changed after the cited evidence, or one repo in a
+multi-repo delivery was omitted, mark the affected claim PARTIAL. Do not infer freshness
+from a passing command that ran against an unidentified candidate.
+
 For every requested check, report TRUE, FALSE, or PARTIAL with reasoning and a file:line,
 table:column, contract-section, or exact-query citation.
 End with an explicit overall verdict: PASS, FAIL, or PARTIAL. Be concise.
@@ -199,6 +230,17 @@ End with an explicit overall verdict: PASS, FAIL, or PARTIAL. Be concise.
 <verification_request>
 {prompt.rstrip()}
 </verification_request>
+
+Your final response is the audit artifact. Put the COMPLETE report in the final
+response; do not call ExitPlanMode, do not put findings in a plan transition or
+another tool, and do not refer to content as being "above". The runner fails closed
+if the report envelope or explicit verdict is missing.
+
+Use this exact envelope, with every finding and citation inside it:
+{REPORT_START}
+[complete report]
+OVERALL VERDICT: PASS|FAIL|PARTIAL
+{REPORT_END}
 """
 
 
@@ -336,9 +378,24 @@ def claude_command(
         command.extend(
             [
                 "--permission-mode",
-                "plan",
+                "dontAsk",
                 "--tools",
                 "Read,Glob,Grep",
+                "--allowedTools",
+                "Read",
+                "Glob",
+                "Grep",
+                "--disallowedTools",
+                "Edit",
+                "Write",
+                "NotebookEdit",
+                "Bash",
+                "WebFetch",
+                "WebSearch",
+                "Agent",
+                "Task",
+                "ExitPlanMode",
+                "--strict-mcp-config",
             ]
         )
     else:
@@ -377,6 +434,7 @@ def claude_command(
                 "WebSearch",
                 "Agent",
                 "Task",
+                "ExitPlanMode",
                 "--settings",
                 json.dumps(sandbox_settings, separators=(",", ":")),
                 "--strict-mcp-config",
@@ -570,6 +628,41 @@ def parse_codex(
     }
 
 
+def validate_report(response: Any) -> dict[str, Any]:
+    """Require a complete, self-contained verifier artifact.
+
+    Provider exit code 0 only proves that the CLI completed. The envelope prevents a
+    verifier from placing its substantive findings in a plan-transition/tool payload
+    that the provider's final-result field does not preserve.
+    """
+    errors: list[str] = []
+    if not isinstance(response, str):
+        return {
+            "valid": False,
+            "verdict": None,
+            "errors": ["response is not text"],
+        }
+
+    report = response.strip()
+    if not report.startswith(REPORT_START) or not report.endswith(REPORT_END):
+        errors.append("complete report envelope is missing")
+
+    verdicts = OVERALL_VERDICT.findall(report)
+    if len(verdicts) != 1:
+        errors.append("exactly one explicit overall verdict is required")
+    elif report.startswith(REPORT_START) and report.endswith(REPORT_END):
+        body = report[len(REPORT_START) : -len(REPORT_END)]
+        body_without_verdict = OVERALL_VERDICT.sub("", body).strip()
+        if not body_without_verdict:
+            errors.append("substantive report body is missing")
+
+    return {
+        "valid": not errors,
+        "verdict": verdicts[0].upper() if len(verdicts) == 1 else None,
+        "errors": errors,
+    }
+
+
 def configured_codex_model() -> tuple[str | None, str]:
     codex_home = Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
     config_path = codex_home / "config.toml"
@@ -668,10 +761,15 @@ def error_payload(args: argparse.Namespace, message: str) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "status": "failed",
+        "verifier_verdict": None,
+        "reported_gate_passed": False,
         "gate": args.gate,
         "author": args.author,
         "verifier": None,
         "assurance": "none",
+        "report_validation": missing_report_validation(
+            "gate did not produce a verifier report"
+        ),
         "error": message,
         "finished_at": utc_now(),
     }
@@ -744,9 +842,9 @@ def run(args: argparse.Namespace) -> int:
             requested_model_source = "--model"
         elif verifier == "claude":
             command_model = env_default(
-                "VERIFIED_DELIVERY_CLAUDE_MODEL", "claude-opus-4-8"
+                "VERIFIED_DELIVERY_CLAUDE_MODEL", "claude-opus-5"
             )
-            requested_model = command_model or "claude-opus-4-8"
+            requested_model = command_model or "claude-opus-5"
             requested_model_source = (
                 "VERIFIED_DELIVERY_CLAUDE_MODEL or built-in default"
             )
@@ -779,6 +877,8 @@ def run(args: argparse.Namespace) -> int:
     base: dict[str, Any] = {
         "schema_version": 1,
         "status": "dry_run" if args.dry_run else "running",
+        "verifier_verdict": None,
+        "reported_gate_passed": False,
         "gate": args.gate,
         "author": args.author,
         "author_provider": author_provider,
@@ -792,10 +892,13 @@ def run(args: argparse.Namespace) -> int:
         "cwd": str(cwd),
         "prompt_sha256": prompt_hash,
         "timeout_seconds": args.timeout,
+        "report_validation": missing_report_validation(
+            "verifier report has not completed"
+        ),
         "readonly_shell": {
             "enabled": args.allow_readonly_shell,
             "sandbox": "claude-native" if args.allow_readonly_shell else None,
-            "permission_mode": "dontAsk" if args.allow_readonly_shell else None,
+            "permission_mode": "dontAsk" if verifier == "claude" else None,
             "deny_write": [str(cwd)] if args.allow_readonly_shell else [],
             "allowed_commands": effective_shell_commands,
             "direct_commands": args.shell_command,
@@ -918,9 +1021,28 @@ def run(args: argparse.Namespace) -> int:
         else parse_codex(stdout, requested_model, requested_model_source)
     )
     base.update(parsed)
-    base["status"] = "completed"
+    report_validation = validate_report(base.get("response"))
+    base["report_validation"] = report_validation
     if stderr.strip():
         base["stderr_excerpt"] = excerpt(stderr)
+    if not report_validation["valid"]:
+        base["status"] = "failed"
+        base["error"] = (
+            "verifier returned an incomplete final report; gate remains closed: "
+            + "; ".join(report_validation["errors"])
+        )
+        write_result(base, result_output)
+        return EXIT_FAILED
+    verifier_verdict = report_validation["verdict"]
+    base["verifier_verdict"] = verifier_verdict
+    base["reported_gate_passed"] = verifier_verdict == "PASS"
+    base["status"] = "completed"
+    if not base["reported_gate_passed"]:
+        base["gate_closed_reason"] = (
+            f"verifier returned {verifier_verdict}; the gate remains closed"
+        )
+        write_result(base, result_output)
+        return EXIT_GATE_CLOSED
     write_result(base, result_output)
     return 0
 

@@ -28,8 +28,10 @@ pins that value for the gate so attribution survives the clean-config invocation
 config nor Codex reports a model, the runner records `configured-default` rather than
 making an unsupported claim.
 
-The runner extracts the last agent message and usage from Codex JSONL events. A
-successful CLI exit still does not imply a passing verification verdict.
+The runner extracts the last agent message and usage from Codex JSONL events, then
+requires the complete-report envelope and one explicit overall verdict. A successful
+CLI exit still does not imply a passing verification verdict. A complete FAIL or
+PARTIAL report is preserved, but closes the process gate with exit 4.
 
 The raw JSONL event stream is preserved at `<output>.events.jsonl` and written
 live, so the audit trail (which files/commands the verifier ran, via `item.*`
@@ -41,6 +43,10 @@ Every gate prompt is prefixed with the `<<verified-delivery-gate: ...>>`
 role-handshake marker; a Codex-side copy of this skill recognizes it via the
 SKILL.md role guard and stays in the verifier role instead of re-entering the
 authoring loop.
+
+The same prompt requires the final agent message to contain
+`<<verified-delivery-report:start>> ... <<verified-delivery-report:end>>`; an omitted
+or intermediate-only report fails closed.
 
 ## Equivalent command
 
