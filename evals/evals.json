@@ -88,6 +88,19 @@
         "Unresolved material evidence becomes PARTIAL rather than a timeout or invented PASS",
         "The workflow does not increase the default timeout, downgrade Opus 5, or add automatic provider fallback"
       ]
+    },
+    {
+      "id": 8,
+      "prompt": "Codex lists four skills named verified-delivery: one current clean checkout, one stale dirty checkout in another scanned root, and two historical skill-snapshot directories under a scanned skills tree. Resolve this safely before the next correctness-critical gate.",
+      "expected_output": "The workflow identifies one current clean canonical checkout, preserves the dirty clone and historical snapshots outside every discovery root, and confirms that only one executable verified-delivery remains without discarding local work.",
+      "files": [],
+      "expectations": [
+        "Every duplicate is resolved by path and version identity (Git HEAD plus dirty state, or snapshot content hash/provenance) rather than by display name",
+        "Exactly one current clean canonical checkout remains in all active skill-discovery roots",
+        "A dirty duplicate is moved intact to an archive rather than overwritten or deleted",
+        "Evaluation workspaces and skill snapshots are moved outside directories scanned for executable skills",
+        "If local work cannot be preserved while selecting one canonical checkout, the gate remains closed"
+      ]
     }
   ]
 }

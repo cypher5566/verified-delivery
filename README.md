@@ -75,6 +75,15 @@ ID is resolved first and then pinned for the clean verifier process.
 ## Install
 
 Install the entire directory because the skill depends on `references/` and `scripts/`.
+Install it in exactly one directory scanned by your runtime. If Codex scans both
+`~/.codex/skills` and `~/.agents/skills`, do not install the same skill in both places.
+Keep evaluation workspaces and `skill-snapshot-*` baselines outside every active
+skill-discovery root so they cannot be selected as executable skills.
+
+If duplicate catalog entries already exist, compare each copy's resolved path plus Git
+HEAD and dirty state when available, or content hash/provenance for a plain snapshot.
+Preserve dirty or historical copies by moving them intact to an archive outside the
+discovery roots; never overwrite them during cleanup.
 
 Claude Code:
 

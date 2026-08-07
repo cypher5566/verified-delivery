@@ -38,6 +38,20 @@ Without that marker, you are the author: run the loop below.
 
 ## Before the loop
 
+### Resolve the active installation
+
+If the skill catalog exposes more than one `verified-delivery`, resolve the ambiguity
+before running a gate. There must be exactly one active checkout across all directories
+the runtime scans for skills. For every duplicate, inspect its resolved path plus Git
+HEAD and dirty state when it is a checkout; for a plain snapshot, record its content
+hash or provenance instead. Do not assume identical names mean identical content.
+
+Keep one current, clean canonical checkout active. Never overwrite or delete a dirty
+duplicate: move it intact to an archive outside every skill-discovery root. Keep eval
+workspaces and `skill-snapshot-*` baselines outside directories named `skills` as well;
+they are evidence, not executable installations. If a single active checkout cannot be
+identified without losing local work, keep the gate closed and report the ambiguity.
+
 Determine the current upstream coding agent or provider, such as `codex`, `claude`,
 `cursor`, `windsurf`, `gemini`, or `aider`. Then read
 [`references/verifier-policy.md`](references/verifier-policy.md). Read only the adapter
