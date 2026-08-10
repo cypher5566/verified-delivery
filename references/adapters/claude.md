@@ -32,7 +32,7 @@ the first fingerprint). This keeps the evidence readable without changing the ca
 fingerprint.
 
 For a Git-backed Result Gate whose PASS requires independent reproduction of hashes,
-Git drift, or deterministic tests, opt in on the first attempt with
+Git drift, or portable deterministic tests, opt in on the first attempt with
 `--allow-readonly-shell` and repeat one exact `--shell-command` per check. This changes
 the Claude permission mode to `dontAsk`, adds only those exact Bash approvals, and
 enables Claude's native OS sandbox with:
@@ -48,6 +48,14 @@ read-only. The profile remains opt-in: Plan Gates and Result Gates with sufficie
 candidate-bound readable artifacts keep the smaller Read/Glob/Grep surface. `--output`
 must resolve outside `cwd`, which also keeps the raw events sidecar outside the audited
 tree.
+
+Classify commands before approval. Host process tables, devices, keychains, host IPC,
+and platform integration are `target-host` evidence even when the command itself looks
+read-only; do not force them through the verifier sandbox. Bind sanitized author output,
+exit status, and artifact hash to the frozen candidate, then ask Claude to audit that
+evidence and the relevant source. A sandbox skip is not a pass, and a sandbox capability
+failure is not automatically a candidate defect. The final report records each command
+as EXECUTED_PASS, EXECUTED_FAIL, or UNAVAILABLE with candidate/environment/unknown scope.
 
 Give the verifier a bounded review packet: acceptance criteria, source routing,
 candidate fingerprint, exact test evidence, prior blocking findings, and explicit

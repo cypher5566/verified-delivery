@@ -151,6 +151,7 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(result["report_validation"]["valid"])
         self.assertEqual(result["verifier_verdict"], "PASS")
         self.assertTrue(result["reported_gate_passed"])
+        self.assertEqual(result["gate_outcome_class"], "gate_passed")
         self.assertIn(
             "do not call exitplanmode",
             invocation["stdin"].lower(),
@@ -164,6 +165,9 @@ class RunnerTests(unittest.TestCase):
             invocation["stdin"],
         )
         self.assertIn("evidence-freshness guard", invocation["stdin"])
+        self.assertIn("evidence-domain guard", invocation["stdin"])
+        self.assertIn("EXECUTED_PASS/EXECUTED_FAIL/UNAVAILABLE", invocation["stdin"])
+        self.assertIn("enforce dual proof", invocation["stdin"])
         self.assertIn("multi-repo delivery was omitted", invocation["stdin"])
         self.assertIn("Convergence guard", invocation["stdin"])
         self.assertIn(
@@ -193,6 +197,7 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(result["status"], "completed")
                 self.assertEqual(result["verifier_verdict"], verdict)
                 self.assertFalse(result["reported_gate_passed"])
+                self.assertEqual(result["gate_outcome_class"], "gate_nonpassing")
                 self.assertIn("gate remains closed", result["gate_closed_reason"])
                 self.assertEqual(result["response"], report)
 
@@ -208,6 +213,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         result = self.result()
         self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["gate_outcome_class"], "verifier_protocol")
         self.assertEqual(result["response"], incomplete)
         self.assertFalse(result["reported_gate_passed"])
         self.assertFalse(result["report_validation"]["valid"])
@@ -333,6 +339,8 @@ class RunnerTests(unittest.TestCase):
             invocation["stdin"],
         )
         self.assertIn("Never append", invocation["stdin"])
+        self.assertIn("caller classified these commands as portable", invocation["stdin"])
+        self.assertIn("candidate, environment, or unknown", invocation["stdin"])
 
     @unittest.skipUnless(sys.platform == "darwin", "macOS Seatbelt only")
     def test_macos_seatbelt_command_is_wrapped_and_native_excluded(self) -> None:
@@ -646,6 +654,7 @@ class RunnerTests(unittest.TestCase):
         result = self.result()
         invocation = self.invocation()
         self.assertEqual(result["status"], "timed_out")
+        self.assertEqual(result["gate_outcome_class"], "verifier_timeout")
         expected_hash = hashlib.sha256(invocation["stdin"].encode("utf-8")).hexdigest()
         self.assertEqual(result["prompt_sha256"], expected_hash)
         self.assertFalse(result["report_validation"]["valid"])
@@ -655,6 +664,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         result = self.result()
         self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["gate_outcome_class"], "verifier_infrastructure")
         self.assertEqual(result["exit_code"], 9)
         self.assertIn("provider failure", result["stderr_excerpt"])
         self.assertFalse(result["report_validation"]["valid"])

@@ -80,10 +80,21 @@ stop gathering optional evidence once a claim can be classified and reserve time
 the complete report; unresolved material evidence is PARTIAL, not a reason to read until
 the hard timeout.
 
+Classify each criterion and deterministic command before Gate 2 as `portable`,
+`target-host`, `external-readonly`, or `privileged-live`. Portable commands are the only
+ones reproduced through the native verifier sandbox. Target-host checks such as process
+identity, device access, host IPC, or platform integration must instead have sanitized
+output, exit status, and artifact hash tied to the frozen candidate, plus source audit.
+External/live checks require explicit authorization and freshness metadata. A skipped
+check is never a pass; it declares which other domain must supply the proof.
+When a gate spans domains, require dual proof: rerun every applicable portable check in
+the verifier sandbox and separately audit fresh candidate-bound target/external/live
+evidence. Neither evidence source replaces the other.
+
 Claude source audits default to `dontAsk` with only Read/Glob/Grep allowed; this avoids
 Claude's plan-transition channel while exposing no write or shell tool. If a result
 gate on a Git-backed candidate specifically requires independent freshness, hash, or
-command reproduction, the caller should opt in on the first attempt to the runner's
+portable command reproduction, the caller should opt in on the first attempt to the runner's
 read-only shell profile with one exact, non-compound command per approval.
 Separators, redirects,
 substitutions, and the `*` permission wildcard are rejected. The profile is fail-closed:
@@ -96,6 +107,8 @@ sidecar must resolve outside `cwd`.
 The invariant is scoped to the audited tree. Exact ADB, database, cloud, or network
 commands can still mutate external targets, so approve only semantically read-only
 queries and never infer device- or host-wide read-only behavior from this profile.
+Do not pass host-specific commands merely because their spelling is read-only: sandbox
+capability is part of reproducibility.
 
 On macOS, Playwright/Chromium can require Mach IPC that Claude's native sandbox blocks.
 Use `--macos-seatbelt-command` only for that exact browser command. The bundled argv-only
@@ -118,6 +131,11 @@ The runner's `status` describes execution, not correctness:
 Only an explicit passing response with sufficient citations can pass a gate. A failed
 or timed-out invocation, empty response, ambiguous verdict, missing SSOT, or failing
 deterministic test keeps the gate closed.
+
+For every approved command, require the report to record its evidence domain,
+`EXECUTED_PASS`/`EXECUTED_FAIL`/`UNAVAILABLE`, and whether any failure is attributable to
+the candidate, environment, or remains unknown. An environment mismatch is not an
+automatic candidate failure, but unresolved material evidence still produces PARTIAL.
 
 Every wrapped prompt requires the full final report between
 `<<verified-delivery-report:start>>` and

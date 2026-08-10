@@ -137,6 +137,27 @@ Gate 2; the `candidate_sha256` values must match. Repeat it for every repo in sc
 Treat each relevant or dirty Git submodule as a separate in-scope repo: the parent
 fingerprint records its gitlink and dirty marker, not the identity of internal changes.
 
+Before running final checks, assign every acceptance criterion and command to an
+evidence domain. Put the matrix in the Result Gate request:
+
+| Domain | What belongs here | Required proof |
+|---|---|---|
+| `portable` | Checks needing only the audited tree and ordinary sandbox capabilities | The verifier reruns the exact command against the frozen candidate |
+| `target-host` | Process tables, host IPC, devices, keychains, platform services, or host-specific integration | The author runs it on the target host, saves exit status/output/hash outside the repo, and binds it to the same candidate; the verifier audits both evidence and source |
+| `external-readonly` | Database, cloud, or API queries that are semantically read-only but depend on external state | Record endpoint/identity/time and sanitized result; rerun only when authorization and freshness permit |
+| `privileged-live` | Checks requiring credentials, production access, mutation risk, or user interaction | Never infer permission; use scoped author evidence or stop with material uncertainty |
+
+A skip is not a pass. It only declares that another evidence domain must prove that
+criterion. Do not force target-host, device, or live checks into the verifier sandbox,
+and do not weaken a production invariant merely to make a portable profile green.
+Conversely, author evidence cannot replace a portable rerun when the verifier can
+reproduce it safely.
+
+Use dual proof when one Result Gate spans domains: every fresh Gate 2 after an evidence
+profile correction must both rerun all applicable portable checks in the verifier
+sandbox and audit fresh candidate-bound evidence for every target-host/external/live
+criterion. Neither half substitutes for the other.
+
 Do not let a model verdict override a failing deterministic test.
 
 ### 4. Gate 2: verify the result
@@ -160,6 +181,12 @@ sweep and require every finding to be labeled:
 `PASS` may include non-blocking findings. `PARTIAL` is for material uncertainty, not a
 wishlist. This preserves strictness without creating endless polish rounds.
 
+Require an evidence-command table for every requested command: domain, execution status
+(`EXECUTED_PASS`, `EXECUTED_FAIL`, or `UNAVAILABLE`), and failure scope
+(`candidate`, `environment`, or `unknown`). A verifier-sandbox limitation is not by
+itself a candidate defect. It still keeps a material criterion open unless matching
+target-host evidence and source audit prove it through the declared matrix.
+
 If the verifier needs a materialized diff artifact, create it before the first
 fingerprint either outside every fingerprinted repo under the readable common `cwd`,
 or at an explicitly ignored path. Never add an untracked artifact inside a fingerprinted
@@ -178,7 +205,8 @@ python3 <skill-root>/scripts/run_verifier.py \
 
 Claude verification is source-read-only by default. For a Git-backed Result Gate whose
 PASS depends on independently checking candidate freshness, artifact hashes, or
-deterministic commands, use the explicit evidence profile on the first Gate 2 attempt.
+portable deterministic commands, use the explicit evidence profile on the first Gate 2
+attempt.
 This avoids a predictable PARTIAL caused only by withholding evidence capability:
 
 ```bash
@@ -193,8 +221,10 @@ Use one exact, non-compound command per flag and include cache/bytecode-off opti
 needed. Shell separators, redirects, substitutions, and the `*` permission wildcard are
 rejected. The runner changes Claude to `dontAsk`, deny-writes the entire `cwd` through
 the native OS sandbox, requires sandbox startup, and disables unsandboxed fallback. This
-is a narrow evidence-reproduction profile, not a broader authoring mode. Keep it off
-for Plan Gates and when readable, candidate-bound artifacts are sufficient. Put
+is a narrow portable evidence-reproduction profile, not a broader authoring mode. Only
+pass commands classified `portable`; host-specific commands belong in
+fingerprint-bound artifacts instead. Keep it off for Plan Gates and when readable,
+candidate-bound artifacts are sufficient. Put
 `--output` outside `cwd`; the runner rejects
 stdout-only or in-tree result/event artifacts in this mode.
 
@@ -210,16 +240,33 @@ nested shell interpreters. Chromium may still use host resources outside `cwd`, 
 approve trusted deterministic browser tests. Never reclassify a browser-launch sandbox
 failure as a product pass.
 
-Fix every blocking correctness flag and add a check for each fix. Defer non-blocking
-findings by default once the candidate has passed; implementing them mutates the
-candidate and legitimately requires fresh evidence and Gate 2. The normal path is one
-Plan Gate and one Result Gate. Rerun Gate 2 only after a non-passing verdict or a
-candidate/contract change.
+Fix every blocking correctness flag and add a check for each fix. While the gate is
+closed, do not implement non-blocking findings unless they are directly required to
+diagnose or fix the blocker; that is scope expansion, not convergence. Defer
+non-blocking findings by default once the candidate has passed; implementing them
+mutates the candidate and legitimately requires fresh evidence and Gate 2. The normal
+path is one Plan Gate and one Result Gate. Rerun Gate 2 only after a non-passing verdict
+or a candidate/contract change.
 
-If Gate 2 has not converged after two attempts, pause before another code edit and
-classify the cause: incomplete evidence, a genuine implementation defect, scope creep
-from non-blocking polish, or inconsistent verifier judgment. Fix the process input that
-caused the extra round; do not blindly keep expanding scope.
+Count two Result Gate attempts per unchanged candidate and evidence profile. If Gate 2
+has not converged, pause before another code edit or model rerun and classify the cause:
+
+- `candidate-defect`: the same check fails on the author/target environment or source
+  proves the invariant is broken — fix code, refreeze, rerun affected evidence;
+- `evidence-environment-mismatch`: the verifier lacks a declared host/device/network
+  capability — fix the evidence matrix/profile, not production behavior, then rerun
+  the portable subset and audit fresh candidate-bound target evidence;
+- `missing-evidence`: collect the smallest candidate-bound proof that could change the
+  material verdict;
+- `verifier-infrastructure-or-protocol`: fix invocation, model availability, timeout
+  routing, or report-envelope delivery without pretending a judgment occurred;
+- `scope-creep-or-inconsistent-judgment`: restore the accepted materiality boundary and
+  carry all prior grounded findings into the next fresh review.
+
+One diagnostic replay may confirm an environment mismatch; never use repeated model
+runs as a substitute for changing the faulty input. A new fingerprint or a materially
+corrected evidence profile starts a new attempt pair, but it does not erase earlier
+findings.
 
 Integrate only within the user's authorization and the team's convention. Commit is
 not deploy; state plainly whether the change is local, committed, pushed, deployed, or

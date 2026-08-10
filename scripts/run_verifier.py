@@ -235,6 +235,18 @@ If source or contract inputs changed after the cited evidence, or one repo in a
 multi-repo delivery was omitted, mark the affected claim PARTIAL. Do not infer freshness
 from a passing command that ran against an unidentified candidate.
 
+For a result gate, also apply an evidence-domain guard. Classify each requested check as
+portable, target-host, external-readonly, or privileged-live. Reproduce portable checks
+when an exact approved command is available. For target-host/device/live evidence,
+verify the candidate binding, artifact identity, and relevant source without pretending
+a sandbox skip is a pass. A command failure is candidate-caused only when grounded
+evidence attributes it to the candidate; sandbox or capability failure is an environment
+mismatch, and unresolved attribution remains unknown. Report each command's domain,
+EXECUTED_PASS/EXECUTED_FAIL/UNAVAILABLE status, and candidate/environment/unknown scope.
+When the gate spans domains, enforce dual proof: rerun all applicable portable checks
+and separately audit fresh candidate-bound target-host/external/live evidence. Neither
+half replaces the other.
+
 For every requested check, report TRUE, FALSE, or PARTIAL with reasoning and a file:line,
 table:column, contract-section, or exact-query citation.
 End with an explicit overall verdict: PASS, FAIL, or PARTIAL. Be concise.
@@ -266,6 +278,14 @@ command separately and character-for-character exactly as listed below. Never ap
 `echo $?`, a separator, redirect, loop, wrapper, timeout, `cd`, environment change, or
 any other character. A modified or combined command will be permission-denied and must
 remain a non-passing uncertainty; do not retry it in a different shape.
+
+The caller classified these commands as portable, but verify that assumption from the
+observed result. For each command, record EXECUTED_PASS, EXECUTED_FAIL, or UNAVAILABLE
+and classify a failure as candidate, environment, or unknown. Do not label the candidate
+broken merely because the OS sandbox cannot expose a host process table, device, IPC,
+network, credential, or other undeclared capability. Such a mismatch keeps material
+evidence open unless the request supplies same-fingerprint target-host evidence plus a
+source audit. Never weaken a checked invariant or invent a pass to compensate.
 
 Approved exact commands:
 {rendered}
@@ -773,6 +793,7 @@ def error_payload(args: argparse.Namespace, message: str) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "status": "failed",
+        "gate_outcome_class": "configuration_error",
         "verifier_verdict": None,
         "reported_gate_passed": False,
         "gate": args.gate,
@@ -889,6 +910,7 @@ def run(args: argparse.Namespace) -> int:
     base: dict[str, Any] = {
         "schema_version": 1,
         "status": "dry_run" if args.dry_run else "running",
+        "gate_outcome_class": "dry_run" if args.dry_run else "pending",
         "verifier_verdict": None,
         "reported_gate_passed": False,
         "gate": args.gate,
@@ -938,6 +960,7 @@ def run(args: argparse.Namespace) -> int:
         base.update(
             {
                 "status": "failed",
+                "gate_outcome_class": "verifier_infrastructure",
                 "exit_code": EXIT_FAILED,
                 "duration_seconds": round(time.monotonic() - started, 3),
                 "finished_at": utc_now(),
@@ -967,6 +990,7 @@ def run(args: argparse.Namespace) -> int:
         base.update(
             {
                 "status": "failed",
+                "gate_outcome_class": "verifier_infrastructure",
                 "exit_code": EXIT_FAILED,
                 "duration_seconds": round(time.monotonic() - started, 3),
                 "finished_at": utc_now(),
@@ -994,6 +1018,7 @@ def run(args: argparse.Namespace) -> int:
         base.update(
             {
                 "status": "timed_out",
+                "gate_outcome_class": "verifier_timeout",
                 "exit_code": EXIT_TIMEOUT,
                 "duration_seconds": round(time.monotonic() - started, 3),
                 "finished_at": utc_now(),
@@ -1017,6 +1042,7 @@ def run(args: argparse.Namespace) -> int:
         base.update(
             {
                 "status": "failed",
+                "gate_outcome_class": "verifier_infrastructure",
                 "stdout_excerpt": excerpt(stdout),
                 "stderr_excerpt": excerpt(stderr),
                 "error": "verifier CLI exited nonzero; the gate did not run",
@@ -1039,6 +1065,7 @@ def run(args: argparse.Namespace) -> int:
         base["stderr_excerpt"] = excerpt(stderr)
     if not report_validation["valid"]:
         base["status"] = "failed"
+        base["gate_outcome_class"] = "verifier_protocol"
         base["error"] = (
             "verifier returned an incomplete final report; gate remains closed: "
             + "; ".join(report_validation["errors"])
@@ -1049,6 +1076,9 @@ def run(args: argparse.Namespace) -> int:
     base["verifier_verdict"] = verifier_verdict
     base["reported_gate_passed"] = verifier_verdict == "PASS"
     base["status"] = "completed"
+    base["gate_outcome_class"] = (
+        "gate_passed" if base["reported_gate_passed"] else "gate_nonpassing"
+    )
     if not base["reported_gate_passed"]:
         base["gate_closed_reason"] = (
             f"verifier returned {verifier_verdict}; the gate remains closed"

@@ -22,6 +22,12 @@ not influence the independent audit. Authentication still comes from `CODEX_HOME
 `--skip-git-repo-check` supports a safe common parent that contains separate SSOT and
 target repositories. The read-only sandbox remains the final write boundary.
 
+Read-only does not imply target-host capability. Classify process-table, device,
+keychain, host-IPC, platform-service, external, and privileged checks before the gate.
+Run only portable checks inside the verifier sandbox; bind target-host output and hashes
+to the frozen candidate for source audit. A sandbox skip is not a pass, and a capability
+failure is not automatically a candidate defect.
+
 The runner reads only the top-level `model` field from `$CODEX_HOME/config.toml`, then
 pins that value for the gate so attribution survives the clean-config invocation. Pass
 `--model <id>` or set `VERIFIED_DELIVERY_CODEX_MODEL` to override it. If neither the

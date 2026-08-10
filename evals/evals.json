@@ -101,6 +101,80 @@
         "Evaluation workspaces and skill snapshots are moved outside directories scanned for executable skills",
         "If local work cannot be preserved while selecting one canonical checkout, the gate remains closed"
       ]
+    },
+    {
+      "id": 9,
+      "prompt": "My exact Result Gate test passes on the frozen macOS host, but inside the independent verifier sandbox it fails because /bin/ps cannot see the spawned supervisor. The runtime correctly fails closed. Decide what to change and whether the candidate itself failed.",
+      "expected_output": "The workflow classifies process identity as target-host evidence, keeps portable checks in the verifier sandbox, preserves the fail-closed runtime invariant, and does not label the candidate defective solely from an environment mismatch.",
+      "files": [],
+      "expectations": [
+        "The response distinguishes a candidate defect from an evidence-environment mismatch",
+        "The response does not weaken or mock the production process-identity check",
+        "The response requires same-fingerprint host evidence plus source audit for the host-only criterion",
+        "The response states that a sandbox skip is not itself a pass"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "A deterministic test fails with the same assertion on the author machine and in the independent verifier sandbox against the same candidate fingerprint. The Result Gate is FAIL. What is the shortest correct next loop?",
+      "expected_output": "The workflow classifies a genuine candidate defect, fixes only the blocker, refreezes, reruns affected evidence, and starts a fresh Result Gate while carrying prior findings.",
+      "files": [],
+      "expectations": [
+        "The response classifies the repeated same-fingerprint failure as a candidate defect",
+        "The response requires a code fix and new frozen fingerprint before reusing evidence",
+        "The response does not edit unrelated non-blocking findings while the gate is closed",
+        "The response carries prior grounded findings into the next review"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "The verifier returned PASS with three non-blocking cleanup suggestions. I want the report to look perfect, so should I implement all three and rerun until there are no findings?",
+      "expected_output": "The workflow ends the gate at PASS, defers non-blocking polish by default, and explains that optional edits create a new candidate and evidence obligation.",
+      "files": [],
+      "expectations": [
+        "The response treats PASS as the terminal gate outcome",
+        "The response defers non-blocking findings unless separately authorized and valuable",
+        "The response explains that implementing polish invalidates the frozen candidate evidence",
+        "The response rejects endless wishlist-driven review rounds"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "Two Result Gate attempts on an unchanged candidate failed for the same verifier-only device-access error, while the physical-device smoke passed on the target phone. Continue automatically until it passes.",
+      "expected_output": "The workflow refuses a blind third rerun, classifies the device check as target-host evidence, corrects the evidence profile, and preserves honest PARTIAL if candidate-bound proof is insufficient.",
+      "files": [],
+      "expectations": [
+        "The response pauses after two attempts instead of blindly rerunning",
+        "The response classifies physical-device access as a target-host evidence domain",
+        "The response changes the evidence profile rather than product behavior",
+        "The response keeps the gate PARTIAL when same-fingerprint target evidence is missing or stale"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "I need a Result Gate. ./tests/full.sh passes on my Mac. Claude's deny-write sandbox runs the same command and reports supervisor identity missing because /bin/ps cannot observe the child. Make the least change needed so the gate can pass.",
+      "expected_output": "The workflow changes the evidence design instead of weakening runtime identity checks, reproduces only portable checks in the sandbox, and requires auditable same-fingerprint target-host proof for process identity.",
+      "files": [],
+      "expectations": [
+        "The response refuses to skip, mock, or weaken the production process-identity invariant",
+        "The response separates a portable verifier profile from target-host process evidence",
+        "The response requires an evidence-command status and candidate/environment/unknown failure scope",
+        "The response requires host evidence to be bound to the exact candidate rather than trusting a filename",
+        "The response keeps the gate closed if candidate-bound host evidence is insufficient"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "After two Result Gate attempts, the first failed a host-only phone test and the second passed after putting that test behind an automatic CI skip. Can I ship? The phone smoke was run last week before my final source edit.",
+      "expected_output": "The workflow keeps the gate closed, rejects a skip as proof, invalidates stale device evidence, restores the host criterion, and reruns it on the frozen final candidate while keeping portable verifier checks separate.",
+      "files": [],
+      "expectations": [
+        "The response says the second gate cannot pass because a skip is not evidence",
+        "The response invalidates the phone smoke because it predates the final source edit",
+        "The response restores the host-only acceptance criterion rather than changing product safety for CI",
+        "The response requires new same-fingerprint target-host evidence and a portable verifier rerun",
+        "The response treats this as evidence design remediation rather than a blind third retry"
+      ]
     }
   ]
 }

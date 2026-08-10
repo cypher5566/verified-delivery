@@ -174,6 +174,10 @@ Argparse usage errors use exit `2`. `verifier_verdict` records the parsed verdic
 author's inspection; this field prevents automation from confusing a finished review
 with a passing review.
 
+`gate_outcome_class` separates process outcomes without guessing the root cause inside
+a verifier report: `gate_passed`, `gate_nonpassing`, `verifier_protocol`,
+`verifier_infrastructure`, `verifier_timeout`, `configuration_error`, or `dry_run`.
+
 Before the final result gate, freeze the candidate and record every in-scope repo's
 remote + HEAD, staged/unstaged diff identity, and untracked-file state. Run final
 tests/builds after that freeze and attach exact commands, exit status, and artifact
@@ -200,15 +204,27 @@ line ranges where practical; summarize large logs; and state non-goals. This let
 verifier spend its fixed time attacking fragile assumptions and composing a durable
 report instead of rediscovering the review surface.
 
+Classify each check as `portable`, `target-host`, `external-readonly`, or
+`privileged-live`. Only portable commands belong in the verifier's shell sandbox.
+Target-host checks (for example process identity, device access, host IPC, or platform
+integration) need same-fingerprint author output plus an artifact hash and verifier
+source audit. A skipped host check is not a pass; it is a declaration that another
+evidence domain must prove the criterion.
+For a mixed-domain Gate, rerun every portable check and separately audit fresh
+candidate-bound host/external/live evidence; neither half substitutes for the other.
+
 Require the verifier to classify findings as `BLOCKING` or `NON-BLOCKING`. PASS can
 carry non-blocking hardening ideas into a follow-up. If result verification has not
-converged after two attempts, diagnose evidence gaps, real defects, scope creep, or
-inconsistent judgment before making another edit.
+converged after two attempts on the same candidate/evidence profile, stop blind reruns
+and classify candidate defect, environment mismatch, missing evidence, verifier
+infrastructure/protocol, or scope creep/inconsistent judgment before making another
+edit. Do not implement unrelated non-blocking polish while the gate is closed.
 
 Claude uses `dontAsk` with only Read/Glob/Grep allowed by default. This avoids Claude's
 special plan-transition channel without exposing write or shell tools. For a Git-backed
 Result Gate that requires independent candidate-freshness, hash, or deterministic-test
-checks, opt in to exact commands on the first attempt:
+checks that are portable in the verifier sandbox, opt in to exact commands on the first
+attempt:
 
 ```bash
 python3 scripts/run_verifier.py \
