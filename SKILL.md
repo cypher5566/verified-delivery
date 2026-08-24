@@ -36,6 +36,15 @@ Without that marker, you are the author: run the loop below.
 4. **Fail closed.** A missing verifier, timeout, CLI error, ambiguous verdict, or
    unavailable model is not a passed gate.
 
+## Proportional friction
+
+Use this loop when a wrong assumption would be expensive to discover late. The goal is
+not the most ceremony; it is the smallest independent evidence loop that can falsify
+the risky assumptions. A gate must distinguish product correctness from protocol,
+environment, and citation-format problems so operational noise does not masquerade as
+a product defect. Do not change verifier model or add review rounds without evidence
+that the existing route is the source of a material miss.
+
 ## Before the loop
 
 ### Resolve the active installation
@@ -111,6 +120,13 @@ closed even when the provider exits successfully. `reported_gate_passed` is true
 for an explicit `PASS`; `FAIL` and `PARTIAL` preserve the complete report but exit 4 so
 automation cannot mistake a finished review for an open gate. Fold every blocking
 correction into the plan before writing the implementation.
+
+Plan Gate evaluates a future specification. A file, helper, test, or copy key that the
+plan explicitly proposes to create is expected to be absent before implementation.
+Treat absence as blocking only when the plan omits its integration point, behavior, or
+proof. Citation precision is blocking only when the evidence cannot be located uniquely
+or ambiguity could change the material verdict; a request for a tighter range around an
+already unique identifier is non-blocking.
 
 ### 3. Build and self-check
 
@@ -268,6 +284,13 @@ runs as a substitute for changing the faulty input. A new fingerprint or a mater
 corrected evidence profile starts a new attempt pair, but it does not erase earlier
 findings.
 
+The same convergence rule applies to a corrected Plan Gate. If one corrected full retry
+contradicts a prior complete judgment on unchanged evidence, do not keep sampling until
+a PASS appears. Preserve both reports and allow one bounded adjudication that compares
+the exact disputed claim against the SSOT and materiality boundary. If it cannot resolve
+the conflict with cited evidence, the gate remains PARTIAL and the user sees the real
+uncertainty.
+
 Integrate only within the user's authorization and the team's convention. Commit is
 not deploy; state plainly whether the change is local, committed, pushed, deployed, or
 merely reviewed.
@@ -297,3 +320,10 @@ merely reviewed.
 - Never recover omitted findings from conversational context. If a verifier says its
   report is "above", refers to an unpreserved plan transition, or omits the report
   envelope, keep the gate closed and rerun only after fixing the verifier path.
+- Accept exactly one complete report envelope even when harmless non-verdict progress
+  narration surrounds it. Preserve the raw response and warning. Multiple envelopes,
+  any verdict outside the envelope, or a missing substantive body still fail closed.
+- On macOS, the runner owns a minimal `caffeinate -i` assertion by default so idle
+  system sleep cannot
+  silently consume a gate attempt. `--allow-system-sleep` is the explicit, recorded
+  opt-out.

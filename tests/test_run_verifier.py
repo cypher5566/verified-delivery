@@ -178,6 +178,33 @@ class RunnerTests(unittest.TestCase):
             "Never spend the final-report budget chasing",
             invocation["stdin"],
         )
+        self.assertIn(
+            "Citation precision is BLOCKING only",
+            invocation["stdin"],
+        )
+        self.assertIn(
+            "A planned new file, test, helper, or copy key",
+            invocation["stdin"],
+        )
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS caffeinate only")
+    def test_macos_runner_owns_sleep_prevention_by_default(self) -> None:
+        completed = self.run_runner("codex")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = self.result()
+        self.assertTrue(result["power_assertion"]["enabled"])
+        self.assertEqual(result["power_assertion"]["provider"], "/usr/bin/caffeinate")
+        self.assertEqual(result["command"][:3], ["/usr/bin/caffeinate", "-i", "--"])
+        self.assertEqual(self.invocation()["provider"], "claude")
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS caffeinate only")
+    def test_macos_sleep_prevention_has_explicit_opt_out(self) -> None:
+        completed = self.run_runner("codex", "--allow-system-sleep")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = self.result()
+        self.assertFalse(result["power_assertion"]["enabled"])
+        self.assertEqual(result["power_assertion"]["reason"], "explicit_opt_out")
+        self.assertNotEqual(result["command"][0], "/usr/bin/caffeinate")
 
     def test_nonpassing_verdict_closes_process_gate_but_preserves_report(self) -> None:
         for verdict in ("FAIL", "PARTIAL"):
@@ -218,6 +245,61 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(result["reported_gate_passed"])
         self.assertFalse(result["report_validation"]["valid"])
         self.assertIn("report envelope", result["error"])
+
+    def test_single_complete_envelope_survives_harmless_progress_preamble(self) -> None:
+        report = (
+            "<<verified-delivery-report:start>>\n"
+            "CHECK: TRUE README.md:1\n"
+            "OVERALL VERDICT: PASS\n"
+            "<<verified-delivery-report:end>>"
+        )
+        response = "I am starting the audit now.\n" + report
+        completed = self.run_runner(
+            "codex",
+            env=self.env(FAKE_RESPONSE=response),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = self.result()
+        self.assertEqual(result["response"], response)
+        self.assertEqual(result["verified_report"], report)
+        self.assertTrue(result["report_validation"]["valid"])
+        self.assertTrue(result["report_validation"]["envelope_extracted"])
+        self.assertIn("outside", result["report_validation"]["warnings"][0])
+        self.assertEqual(result["verifier_verdict"], "PASS")
+
+    def test_verdict_outside_an_otherwise_complete_envelope_fails_closed(self) -> None:
+        response = (
+            "OVERALL VERDICT: FAIL\n"
+            "<<verified-delivery-report:start>>\n"
+            "CHECK: TRUE README.md:1\n"
+            "OVERALL VERDICT: PASS\n"
+            "<<verified-delivery-report:end>>"
+        )
+        completed = self.run_runner(
+            "codex",
+            env=self.env(FAKE_RESPONSE=response),
+        )
+        self.assertEqual(completed.returncode, 1)
+        result = self.result()
+        self.assertFalse(result["report_validation"]["valid"])
+        self.assertIn("outside", result["error"])
+
+    def test_reversed_envelope_markers_fail_closed_without_runner_crash(self) -> None:
+        response = (
+            "<<verified-delivery-report:end>>\n"
+            "CHECK: TRUE README.md:1\n"
+            "OVERALL VERDICT: PASS\n"
+            "<<verified-delivery-report:start>>"
+        )
+        completed = self.run_runner(
+            "codex",
+            env=self.env(FAKE_RESPONSE=response),
+        )
+        self.assertEqual(completed.returncode, 1)
+        result = self.result()
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["report_validation"]["valid"])
+        self.assertIn("malformed", result["error"])
 
     def test_report_without_explicit_overall_verdict_fails_closed(self) -> None:
         incomplete = (

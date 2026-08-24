@@ -44,6 +44,7 @@ FORBIDDEN_SHELL_FRAGMENTS = (
     "*",
 )
 MACOS_SEATBELT_RUNNER = Path(__file__).resolve().with_name("run_macos_seatbelt.py")
+MACOS_CAFFEINATE = Path("/usr/bin/caffeinate")
 SHELL_EXECUTABLES = {
     "bash",
     "csh",
@@ -71,7 +72,13 @@ class ConfigurationError(Exception):
 
 
 def missing_report_validation(reason: str) -> dict[str, Any]:
-    return {"valid": False, "verdict": None, "errors": [reason]}
+    return {
+        "valid": False,
+        "verdict": None,
+        "errors": [reason],
+        "warnings": [],
+        "envelope_extracted": False,
+    }
 
 
 def utc_now() -> str:
@@ -227,6 +234,17 @@ Classify every finding as BLOCKING or NON-BLOCKING:
   accepted scope. PASS may include non-blocking findings. Do not turn optional
   improvement into PARTIAL, and surface all blocking findings you can discover in
   this pass instead of drip-feeding them across reruns.
+
+Citation precision is BLOCKING only when the evidence cannot be located uniquely or
+the ambiguity could change the material verdict. If the request's identifier, routed
+file, and cited range already identify the relevant behavior, treat a request for a
+narrower line range as NON-BLOCKING and audit the behavior itself.
+
+For a plan gate, judge the proposed specification, integration points, and planned
+proof. A planned new file, test, helper, or copy key is expected to be absent before
+implementation; absence is not a defect. It is BLOCKING only when the plan fails to
+say what must be created, where it integrates, or how the acceptance criterion will
+be proved.
 
 For a result gate, apply an evidence-freshness guard. Deterministic test/build evidence
 supports only the exact candidate fingerprint it was run against. Check every named
@@ -668,21 +686,43 @@ def validate_report(response: Any) -> dict[str, Any]:
     that the provider's final-result field does not preserve.
     """
     errors: list[str] = []
+    warnings: list[str] = []
     if not isinstance(response, str):
         return {
             "valid": False,
             "verdict": None,
             "errors": ["response is not text"],
+            "warnings": [],
+            "envelope_extracted": False,
         }
 
-    report = response.strip()
-    if not report.startswith(REPORT_START) or not report.endswith(REPORT_END):
-        errors.append("complete report envelope is missing")
+    raw = response.strip()
+    start_count = raw.count(REPORT_START)
+    end_count = raw.count(REPORT_END)
+    report = ""
+    outside = raw
+    if start_count != 1 or end_count != 1:
+        errors.append("exactly one complete report envelope is required")
+    else:
+        start = raw.index(REPORT_START)
+        end = raw.find(REPORT_END, start + len(REPORT_START))
+        if end < 0:
+            errors.append("complete report envelope is malformed")
+        else:
+            end += len(REPORT_END)
+            report = raw[start:end]
+            outside = (raw[:start] + "\n" + raw[end:]).strip()
+            if outside:
+                warnings.append(
+                    "ignored non-verdict text outside the single complete report envelope"
+                )
+            if OVERALL_VERDICT.search(outside):
+                errors.append("overall verdict outside the report envelope is not allowed")
 
     verdicts = OVERALL_VERDICT.findall(report)
     if len(verdicts) != 1:
         errors.append("exactly one explicit overall verdict is required")
-    elif report.startswith(REPORT_START) and report.endswith(REPORT_END):
+    elif report:
         body = report[len(REPORT_START) : -len(REPORT_END)]
         body_without_verdict = OVERALL_VERDICT.sub("", body).strip()
         if not body_without_verdict:
@@ -692,6 +732,9 @@ def validate_report(response: Any) -> dict[str, Any]:
         "valid": not errors,
         "verdict": verdicts[0].upper() if len(verdicts) == 1 else None,
         "errors": errors,
+        "warnings": warnings,
+        "envelope_extracted": bool(report) and bool(outside),
+        "report": report or None,
     }
 
 
@@ -756,6 +799,15 @@ def parser() -> argparse.ArgumentParser:
         "--timeout",
         type=float,
         default=float(env_default("VERIFIED_DELIVERY_TIMEOUT", "600")),
+    )
+    ap.add_argument(
+        "--allow-system-sleep",
+        action="store_true",
+        help=(
+            "Opt out of the runner's macOS caffeinate assertion. By default a "
+            "long verifier process prevents idle/system sleep so the hard timeout, "
+            "not host suspension, owns liveness."
+        ),
     )
     ap.add_argument(
         "--allow-readonly-shell",
@@ -899,6 +951,23 @@ def run(args: argparse.Namespace) -> int:
             effective_shell_commands,
             excluded_commands,
         )
+        power_assertion: dict[str, Any] = {
+            "enabled": False,
+            "provider": None,
+            "reason": "not_macos",
+        }
+        if sys.platform == "darwin":
+            if args.allow_system_sleep:
+                power_assertion["reason"] = "explicit_opt_out"
+            elif MACOS_CAFFEINATE.is_file():
+                command = [str(MACOS_CAFFEINATE), "-i", "--", *command]
+                power_assertion = {
+                    "enabled": True,
+                    "provider": str(MACOS_CAFFEINATE),
+                    "reason": "protect_verifier_liveness",
+                }
+            else:
+                power_assertion["reason"] = "caffeinate_unavailable"
     except (ConfigurationError, OSError) as exc:
         write_result(error_payload(args, str(exc)), result_output)
         return EXIT_UNAVAILABLE
@@ -926,6 +995,7 @@ def run(args: argparse.Namespace) -> int:
         "cwd": str(cwd),
         "prompt_sha256": prompt_hash,
         "timeout_seconds": args.timeout,
+        "power_assertion": power_assertion,
         "report_validation": missing_report_validation(
             "verifier report has not completed"
         ),
@@ -1061,6 +1131,8 @@ def run(args: argparse.Namespace) -> int:
     base.update(parsed)
     report_validation = validate_report(base.get("response"))
     base["report_validation"] = report_validation
+    if report_validation.get("report"):
+        base["verified_report"] = report_validation["report"]
     if stderr.strip():
         base["stderr_excerpt"] = excerpt(stderr)
     if not report_validation["valid"]:

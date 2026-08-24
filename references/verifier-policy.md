@@ -73,6 +73,13 @@ test/build evidence to it. Require findings to be classified `BLOCKING` or
 `NON-BLOCKING`; PASS may contain non-blocking follow-ups, while PARTIAL is reserved for
 material uncertainty.
 
+For a Plan Gate, evaluate the proposed behavior, integration points, and planned proof.
+A new file, test, helper, or copy key described by the plan is expected to be absent
+before implementation. Its absence is not blocking unless the plan leaves its role,
+integration, or acceptance proof materially ambiguous. Citation precision is blocking
+only when the evidence cannot be located uniquely or the ambiguity could change the
+verdict; otherwise narrower line ranges are non-blocking polish.
+
 For Result Gates, route each acceptance criterion to the smallest useful set of
 production files, tests, and evidence artifacts. Include exact identifiers or line
 ranges where practical, summarize large logs, and state non-goals. The verifier should
@@ -141,9 +148,10 @@ Every wrapped prompt requires the full final report between
 `<<verified-delivery-report:start>>` and
 `<<verified-delivery-report:end>>`, with a substantive body and exactly one
 `OVERALL VERDICT:` line.
-The runner validates this envelope after provider parsing. A provider exit code of zero
-with a summary such as "the details are above" becomes `status: failed`; the incomplete
-response remains in the JSON for diagnosis.
+The runner validates this envelope after provider parsing. Exactly one complete envelope
+may be extracted from harmless non-verdict progress narration; the raw response and a
+warning remain in JSON. Multiple envelopes, any verdict outside the envelope, a missing
+body, or a summary such as "the details are above" becomes `status: failed`.
 
 `report_validation` is present on every normalized payload. Before a report completes,
 or on configuration/provider/timeout failure, it is
@@ -151,6 +159,12 @@ or on configuration/provider/timeout failure, it is
 `verifier_verdict` repeats the parsed verdict at the top level and
 `reported_gate_passed` is true only for PASS. These fields make the process outcome
 machine-readable without pretending to validate the quality of citations.
+
+On macOS, the runner wraps the verifier with `/usr/bin/caffeinate -i --` by default and
+records the assertion as `power_assertion`. The minimal idle-system-sleep assertion does
+not force the display awake. Use `--allow-system-sleep` only for an intentional,
+recorded opt-out. Sleep prevention protects liveness; it does not turn a timeout or
+incomplete report into a pass.
 
 ## Evidence and privacy
 

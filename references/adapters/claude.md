@@ -64,6 +64,11 @@ file or an entire large log. The runner's convergence guard uses roughly 20 evid
 tool calls as a synthesis checkpoint; unresolved material uncertainty becomes PARTIAL
 instead of consuming the report budget until timeout.
 
+For a Plan Gate, do not require planned new artifacts to exist before implementation.
+Audit whether the plan names their integration points and proof. Treat citation
+precision as blocking only when the referenced behavior cannot be located uniquely or
+the ambiguity could change the material verdict.
+
 The bundled `scripts/candidate_fingerprint.py` is a suitable exact command: it reads
 Git metadata and file content to hash HEAD, index, staged/unstaged changes, and
 untracked state without writing the worktree.
@@ -85,9 +90,14 @@ only trusted deterministic browser commands belong in this path.
 
 Claude is invoked with JSON output. The runner extracts `result`, usage, and the actual
 model reported by `modelUsage`, then validates the complete-report envelope and overall
-verdict. A successful CLI exit with an omitted or plan-transition-only report is
-recorded as failed. A complete FAIL or PARTIAL report is preserved as `completed`, but
-the runner exits 4 and sets `reported_gate_passed: false`.
+verdict. One complete envelope may be extracted from harmless non-verdict progress text;
+the raw response and warning are preserved. Multiple envelopes, a verdict outside the
+envelope, or an omitted/plan-transition-only report are recorded as failed. A complete
+FAIL or PARTIAL report is preserved as `completed`, but the runner exits 4 and sets
+`reported_gate_passed: false`.
+
+On macOS the runner owns liveness with `/usr/bin/caffeinate -i --` by default and
+records it in `power_assertion`; `--allow-system-sleep` is the explicit opt-out.
 
 ## Equivalent command
 

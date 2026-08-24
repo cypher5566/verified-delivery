@@ -175,6 +175,42 @@
         "The response requires new same-fingerprint target-host evidence and a portable verifier rerun",
         "The response treats this as evidence design remediation rather than a blind third retry"
       ]
+    },
+    {
+      "id": 15,
+      "prompt": "The verifier returned one complete cited PASS envelope, but prefixed it with 'I am starting the audit now.' Should this consume another full model run?",
+      "expected_output": "The runner extracts the one complete envelope, preserves the raw response with a warning, and accepts the PASS without weakening the fail-closed rules for ambiguous output.",
+      "files": [],
+      "expectations": [
+        "One complete envelope surrounded only by non-verdict narration remains structurally valid",
+        "The raw provider response and a machine-readable warning are preserved",
+        "Multiple envelopes, any verdict outside the envelope, or a missing substantive body still fail closed",
+        "No second model run is spent solely to remove harmless progress narration"
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "A corrected Plan Gate got PASS, then PARTIAL on unchanged evidence only because the second reviewer wanted a narrower line citation for behavior already uniquely located by file, identifier, and range. Keep rerunning until PASS.",
+      "expected_output": "The workflow treats the redundant citation refinement as non-blocking, refuses pass-seeking reruns, and allows at most one bounded adjudication against the SSOT if two complete judgments materially conflict.",
+      "files": [],
+      "expectations": [
+        "Citation precision is blocking only when ambiguity could change the material verdict",
+        "A planned artifact being absent before implementation is not itself a Plan Gate defect",
+        "Contradictory complete judgments on unchanged evidence are preserved rather than sampled away",
+        "One bounded adjudication may resolve the exact disputed claim; unresolved conflict remains PARTIAL"
+      ]
+    },
+    {
+      "id": 17,
+      "prompt": "A long independent gate on macOS was interrupted when the host slept. Make the smallest workflow change that prevents recurrence without increasing the model timeout.",
+      "expected_output": "The runner owns a macOS caffeinate assertion for verifier liveness by default, records it in the result, and offers an explicit opt-out without changing correctness semantics.",
+      "files": [],
+      "expectations": [
+        "macOS verifier commands are wrapped by the minimal /usr/bin/caffeinate -i assertion by default",
+        "The normalized result records whether the power assertion was active and why",
+        "--allow-system-sleep is an explicit recorded opt-out",
+        "Sleep prevention does not turn a timeout, protocol failure, or non-passing verdict into PASS"
+      ]
     }
   ]
 }

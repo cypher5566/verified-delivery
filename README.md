@@ -34,7 +34,9 @@ non-blocking follow-ups; optional polish does not keep the gate open. Another re
 round is needed only when the verdict is non-passing or the candidate/contract changes.
 
 It is intentionally heavier than a normal one-shot change. Use it when being wrong is
-expensive and the error would otherwise be discovered late.
+expensive and the error would otherwise be discovered late. The first-principles test
+is proportionality: each extra round or permission must falsify a material assumption,
+not merely produce more ceremony.
 
 ## Repository layout
 
@@ -145,16 +147,20 @@ OVERALL VERDICT: PASS|FAIL|PARTIAL
 <<verified-delivery-report:end>>
 ```
 
-The envelope is anchored: no preamble may appear before the start marker and no text
-may follow the end marker. `OVERALL VERDICT:` must occupy exactly one whole line with
-only `PASS`, `FAIL`, or `PARTIAL` after the colon. A Markdown heading or paired bold
-wrapper around that line is accepted; trailing commentary on the verdict line is not.
+Exactly one complete envelope is required. Harmless non-verdict progress text before or
+after it is tolerated and recorded as a warning while the raw response is preserved.
+Multiple envelopes or any verdict outside the envelope fail closed. `OVERALL VERDICT:`
+must occupy exactly one whole line with only `PASS`, `FAIL`, or `PARTIAL` after the
+colon. A Markdown heading or paired bold wrapper around that line is accepted; trailing
+commentary on the verdict line is not.
 
 `report_validation` has the shape
-`{"valid": bool, "verdict": "PASS|FAIL|PARTIAL"|null, "errors": [...]}`.
-It checks the anchored envelope, a substantive body, and exactly one overall-verdict
-line; it does not judge whether citations or reasoning are correct. The field is
-present on success, failure, timeout, configuration error, and dry-run payloads.
+`{"valid": bool, "verdict": "PASS|FAIL|PARTIAL"|null, "errors": [...],
+"warnings": [...], "envelope_extracted": bool}`. It checks a single complete envelope,
+a substantive body, and exactly one in-envelope overall-verdict line; it does not judge
+whether citations or reasoning are correct. The field is present on success, failure,
+timeout, configuration error, and dry-run payloads. `verified_report` contains the
+extracted envelope when non-verdict text surrounds it.
 Read `response` yourself and require an explicit, cited PASS. If a verifier puts
 findings in an unpreserved plan transition or returns only "the details are above",
 the runner preserves that response but returns `status: failed`.
@@ -251,6 +257,11 @@ the result and its live `.events.jsonl` sidecar therefore cannot alter the audit
 Every real run, including the default no-shell profile, writes raw provider output to
 `<output>.events.jsonl` (or a temporary external path when output is stdout). It may
 contain the full verifier response, so protect it like the main audit JSON.
+
+On macOS, the runner wraps the verifier with `/usr/bin/caffeinate -i --` by default and
+records the decision in `power_assertion`. This prevents idle system sleep from silently
+consuming a long gate without forcing the display awake. Use `--allow-system-sleep` for
+an explicit opt-out.
 
 “Read-only” here means the audited `cwd`, not every external system. Approve only
 semantically read-only checks: the sandbox cannot stop an exact `adb`, database, cloud,
