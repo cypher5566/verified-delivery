@@ -45,3 +45,24 @@ effort (provider default applies) and tier 3 passes `--effort medium` explicitly
   on timing bugs was not measured here (only plan-gate recall and result-gate false blockers).
 - Round reduction comes from the tier/run-budget rules, not from this replay; measure it on the next
   real deliveries (count runs and rounds per delivery against the 33-run baseline above).
+
+## Addendum — high and xhigh (same cases, same new brief as arms B/C, one run each, timeout 1500 s)
+Added because the first pass compared only low and medium.
+
+| | low (C) | medium (B) | high (D) | xhigh (E) |
+|---|---|---|---|---|
+| GT1 (case 1) | found | found | found | found |
+| GT2a + GT2b (case 2) | both | both | both | both |
+| GT2c (secondary) | non-blocking | non-blocking | non-blocking, deeper (read the CLI source) | same as high |
+| GT2d (secondary) | missed | missed | missed | missed |
+| NEW reorder defect, case 1 (plan) | blocking | blocking | **missed** | blocking |
+| NEW reorder defect, case 3 (result) | non-blocking | non-blocking | **blocking** (most accurate severity) | **missed** (asserted no ordering regression) |
+| False blockers | 0 | 0 | 0 | 0 |
+| Mean wall time | 105 s | 134 s | 250 s | 342 s |
+
+Reading: no evidence that high or xhigh find more. Every effort found every primary ground truth; the
+new defect was missed once each by high and xhigh but by neither low nor medium. Differences between
+runs look like sampling variance, not effort, while cost rises 2.4x (high) and 3.3x (xhigh). Decision
+unchanged: no pinned effort by default (model default, low for gpt-6.1-sol); tier 3 passes medium.
+Untested hypothesis worth measuring next: two parallel low-effort reviews merged may beat one xhigh
+review on recall at lower wall time, because their misses appear independent.
