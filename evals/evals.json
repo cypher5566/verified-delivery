@@ -211,6 +211,54 @@
         "--allow-system-sleep is an explicit recorded opt-out",
         "Sleep prevention does not turn a timeout, protocol failure, or non-passing verdict into PASS"
       ]
+    },
+    {
+      "id": 18,
+      "prompt": "A result-gate reviewer reports that origin/main moved since the request was written, while the files under review are byte-identical. What should the gate do?",
+      "expected_output": "Record a PROTOCOL NOTE and review the content; fingerprint drift that does not touch the reviewed content never makes the verdict FAIL or PARTIAL and does not count as a review round.",
+      "files": [],
+      "expectations": [
+        "The reviewer continues the review instead of stopping on MISMATCH",
+        "The drift appears only as a protocol note",
+        "The verdict depends only on concrete blocking scenarios",
+        "The author fixes the request/tooling instead of rerunning for a different answer"
+      ]
+    },
+    {
+      "id": 19,
+      "prompt": "A reviewer marks as BLOCKING that evidence artifacts do not record which project a command ran against, but cannot describe any user-visible failure. How is it classified and handled?",
+      "expected_output": "It is a protocol note, not blocking: a blocking finding needs a concrete trigger, observable harm, location, and a check. The author adds the provenance to the tooling or answers in one line without another review round.",
+      "files": [],
+      "expectations": [
+        "Blocking requires Scenario, Harm, Where and Check",
+        "Provenance/format issues are protocol notes",
+        "No extra review round is spent on a protocol note",
+        "PASS is still possible with protocol notes"
+      ]
+    },
+    {
+      "id": 20,
+      "prompt": "Tier 3: the accepted plan says to confirm no live classroom broadcast before a production migration. The author only has a usage-log activity check ready, which is weaker. The user is away and authorized the fix. What happens before execution?",
+      "expected_output": "The author writes the precondition record; the weaker check is a DEVIATION, so execution holds until the planned check is run, the plan is amended and re-gated, or the user explicitly approves that specific deviation.",
+      "files": [],
+      "expectations": [
+        "A precondition record row quotes the plan's precondition and the exact check executed",
+        "A weaker or different check is marked DEVIATION even if its result looks safe",
+        "Execution holds on any DEVIATION",
+        "General authorization to fix does not approve a specific deviation"
+      ]
+    },
+    {
+      "id": 21,
+      "prompt": "Tier 2: the result review failed twice in one delivery; each time the author fixed the blocker and refroze a new candidate. A third review is about to start. What does the skill require?",
+      "expected_output": "No third counted review: the budget is two counted runs per gate per delivery and fix-driven reruns count. The author fixes the remaining scenarios with tests, closes the gate by an explicit asymmetric-risk decision, and tells the user; at tier 3 the author stops and hands the open scenarios to the user instead.",
+      "files": [],
+      "expectations": [
+        "Fix-driven reruns count toward the budget",
+        "A new candidate fingerprint does not reset the budget",
+        "Protocol-only reruns do not count",
+        "Tier 3 escalates to the user instead of author closure"
+      ]
     }
   ]
 }

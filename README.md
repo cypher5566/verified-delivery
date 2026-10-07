@@ -14,7 +14,7 @@ not grading its own assumptions.
 | Upstream author | Independent verifier |
 |---|---|
 | Claude Code / Anthropic | Codex |
-| Codex / OpenAI | Claude Code (`claude-opus-5`, `xhigh`) |
+| Codex / OpenAI | Claude Code (`claude-opus-5`, model-default effort) |
 | Other coding agent | Codex when installed, otherwise Claude Code |
 
 The original Claude Code → Codex workflow remains the default for Claude users. Runtime
@@ -285,7 +285,7 @@ VERIFIED_DELIVERY_VERIFIER=auto
 VERIFIED_DELIVERY_CLAUDE_MODEL=claude-opus-5
 VERIFIED_DELIVERY_CODEX_MODEL=<optional versioned model>
 VERIFIED_DELIVERY_OTHER_VERIFIER=codex
-VERIFIED_DELIVERY_EFFORT=xhigh
+VERIFIED_DELIVERY_EFFORT=default
 VERIFIED_DELIVERY_TIMEOUT=600
 ```
 

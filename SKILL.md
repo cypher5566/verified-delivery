@@ -20,15 +20,16 @@ verifier — an infinite mirror.
 the VERIFIER inside someone else's run.** The loop is already running; this
 skill's workflow is not for you right now. Do not run the loop, do not recruit
 another verifier, do not consult this skill further. Perform the requested
-read-only audit alone and reply with per-item verdicts, citations, and an
-overall PASS/FAIL/PARTIAL.
+read-only review alone and reply with the report the gate brief defines, ending
+with an overall PASS/FAIL/PARTIAL.
 
 Without that marker, you are the author: run the loop below.
 
 ## Why this works
 
-1. **Independent gates.** The author does not review its own assumptions. Gate 1 checks
-   the plan before work begins; Gate 2 checks the result before integration.
+1. **Independent review where blind spots are expensive.** The author does not review
+   its own assumptions. The tier decides which gates run: a plan challenge before work
+   begins when the risk is in the design, a result review before integration always.
 2. **Ground truth first.** Name the single source of truth (SSOT) and cite it with
    `file:line`, `table:column`, an API contract section, or the exact query.
 3. **Scope before motion.** Tag each requested item `do now`, `defer (why)`, or
@@ -75,6 +76,43 @@ and records attributable JSON evidence.
 
 ## The loop
 
+### 0. Pick the tier
+
+The reviewer exists to find what a different model sees, not to certify paperwork. Spend
+reviewer runs where a blind spot is expensive:
+
+| Tier | Typical change | Reviewer runs |
+|---|---|---|
+| 1 — ordinary fix | Bounded code change with deterministic tests | Result review only: one run on the frozen diff + test output |
+| 2 — concurrency, ordering, data shape, shared state | Async/callback races, queues, caches, app-logic migrations | One plan challenge before building (fold its scenarios in; do not rerun it), then one result review |
+| 3 — irreversible or privileged-live | Production schema/data mutation, credential rotation, a destructive deploy step | Plan review until PASS, precondition record before execution (3a), then result review |
+
+Pick the lowest tier that covers the riskiest part of the change and state it in the
+first request. Raise the tier when a review finds an irreversible or cross-system risk.
+Run the reviewer in the background while you run your own tests.
+
+**Run budget.** Each completed review counts once. Protocol failures (timeout, missing
+envelope, fingerprint drift that does not touch the reviewed content) are tooling
+defects: fix the invocation and rerun without counting it, and never treat them as a
+verdict. The budget is per delivery, not per candidate: a rerun after a fix counts, so
+fix → refreeze → review cannot loop forever. After two counted runs of the same gate in
+one delivery, stop rerunning:
+fix the remaining blocking scenarios with a test each and decide yourself with an
+explicit asymmetric-risk rationale (which failure would hurt the user more if the
+reviewer is right). Tell the user the gate was closed by author decision and why. At
+tier 3 the author never closes the gate alone: after two counted runs without PASS,
+stop and give the user the open scenarios and your recommendation.
+
+**Blocking means a concrete scenario.** The runner's brief requires every blocking
+finding to name the trigger, the observable harm, the location, and the smallest check
+that would show it. Evidence format, provenance, citation precision, and fingerprints
+are protocol notes and never block. Fix a real scenario with a test; answer a protocol
+note with tooling or a one-line clarification, not another review round.
+
+**Use the reviewer early when the root cause is uncertain.** Before choosing a fix, one
+plan-gate run that challenges the root-cause hypothesis (what would falsify it, what else
+explains the symptom) is the cheapest, highest-leverage use of a second model.
+
 ### 1. Ground and scope
 
 Name the SSOT with its path or identifier. Pull the contract with citations. Separate
@@ -98,7 +136,10 @@ Prepare a concise verification request containing:
 - the uncertain-points list;
 - the target paths the verifier may read;
 - `docs/RUBRIC.md` when the working or driving repo defines it;
-- a request for `TRUE`, `FALSE`, or `PARTIAL` per item with citations.
+- the tier, and the risks you most want challenged.
+
+Do not add your own output format: the runner's brief defines the report shape, and
+competing format demands make reports longer without finding more.
 
 Run the independent verifier before implementing:
 
@@ -119,7 +160,9 @@ also records `report_validation`; a missing report envelope or overall verdict f
 closed even when the provider exits successfully. `reported_gate_passed` is true only
 for an explicit `PASS`; `FAIL` and `PARTIAL` preserve the complete report but exit 4 so
 automation cannot mistake a finished review for an open gate. Fold every blocking
-correction into the plan before writing the implementation.
+correction into the plan before writing the implementation. At tier 2 the plan
+challenge runs once: fold each blocking scenario in with a planned test and build; the
+result review checks the folded fixes. Only tier 3 reruns the plan gate until PASS.
 
 Plan Gate evaluates a future specification. A file, helper, test, or copy key that the
 plan explicitly proposes to create is expected to be absent before implementation.
@@ -176,6 +219,24 @@ criterion. Neither half substitutes for the other.
 
 Do not let a model verdict override a failing deterministic test.
 
+### 3a. Before an irreversible privileged-live step (tier 3)
+
+Gate 2 runs after the fact: for a one-shot production mutation it can record a skipped
+precondition but cannot undo it. Immediately before executing such a step, write a
+precondition record outside every fingerprinted repo and keep it with the Gate 2
+evidence:
+
+| Accepted-plan precondition (quoted, with plan line) | Exact check executed now | Raw result artifact | MATCH / DEVIATION |
+|---|---|---|---|
+
+Fill one row for every precondition the accepted plan names, plus one row binding the
+target identity (project/host/ref) to the exact command and file hash about to run.
+Execute only when every row is MATCH. A check weaker than, narrower than, or different
+from the planned one is a DEVIATION even when its result looks safe. On a DEVIATION,
+hold: amend the plan and rerun Gate 1, or get the user's explicit approval of that
+specific deviation and record it in the row. While executing, append the executed
+command, target identity, file hash, start/end time, and attempt count to the record.
+
 ### 4. Gate 2: verify the result
 
 Prepare a fresh result-gate request containing the accepted plan, SSOT, changed paths
@@ -187,21 +248,16 @@ line ranges where practical, summarize large logs instead of asking the verifier
 read them in full, and name explicit non-goals. Do not ask for a line-by-line review of
 every changed file when a smaller set of invariants proves the result.
 
-Start a new verifier process; do not resume Gate 1's session. Ask for one holistic open
-sweep and require every finding to be labeled:
+Start a new verifier process; do not resume Gate 1's session. The runner's brief asks
+for one open sweep in which every finding is BLOCKING (a concrete scenario: trigger,
+harm, location, check), NON-BLOCKING, or a PROTOCOL NOTE. `PASS` may include
+non-blocking findings and protocol notes. `PARTIAL` is only for something that could not
+be inspected and could hide a blocking scenario, not a wishlist.
 
-- `BLOCKING`: violates a scoped acceptance criterion/invariant, is a candidate-caused
-  deterministic failure, or is missing evidence that could change correctness;
-- `NON-BLOCKING`: hardening, maintainability, polish, or follow-up outside scope.
-
-`PASS` may include non-blocking findings. `PARTIAL` is for material uncertainty, not a
-wishlist. This preserves strictness without creating endless polish rounds.
-
-Require an evidence-command table for every requested command: domain, execution status
-(`EXECUTED_PASS`, `EXECUTED_FAIL`, or `UNAVAILABLE`), and failure scope
-(`candidate`, `environment`, or `unknown`). A verifier-sandbox limitation is not by
-itself a candidate defect. It still keeps a material criterion open unless matching
-target-host evidence and source audit prove it through the declared matrix.
+At tier 3, also ask for an evidence-command table for every requested command: domain,
+execution status (`EXECUTED_PASS`, `EXECUTED_FAIL`, or `UNAVAILABLE`), and failure
+scope (`candidate`, `environment`, or `unknown`). A verifier-sandbox limitation is not
+by itself a candidate defect.
 
 If the verifier needs a materialized diff artifact, create it before the first
 fingerprint either outside every fingerprinted repo under the readable common `cwd`,
@@ -264,8 +320,8 @@ mutates the candidate and legitimately requires fresh evidence and Gate 2. The n
 path is one Plan Gate and one Result Gate. Rerun Gate 2 only after a non-passing verdict
 or a candidate/contract change.
 
-Count two Result Gate attempts per unchanged candidate and evidence profile. If Gate 2
-has not converged, pause before another code edit or model rerun and classify the cause:
+The run budget in step 0 applies (two counted runs per gate per delivery). When a run
+does not pass, classify the cause before another code edit or model rerun:
 
 - `candidate-defect`: the same check fails on the author/target environment or source
   proves the invariant is broken — fix code, refreeze, rerun affected evidence;
@@ -280,8 +336,8 @@ has not converged, pause before another code edit or model rerun and classify th
   carry all prior grounded findings into the next fresh review.
 
 One diagnostic replay may confirm an environment mismatch; never use repeated model
-runs as a substitute for changing the faulty input. A new fingerprint or a materially
-corrected evidence profile starts a new attempt pair, but it does not erase earlier
+runs as a substitute for changing the faulty input. A protocol-only rerun is uncounted;
+a rerun after a candidate fix is counted. Neither erases earlier
 findings.
 
 The same convergence rule applies to a corrected Plan Gate. If one corrected full retry
@@ -309,6 +365,9 @@ merely reviewed.
   `--allow-same-provider`; label the result `reduced`, not independent assurance.
 - Do not add an automatic model fallback. A deliberate retry must name and record the
   replacement model.
+- Effort is not pinned: by default the runner passes none, so the model's own default
+  applies (the 2026-10 replay benchmark found low and medium equal on recall). Pass
+  `--effort medium` at tier 3, or when a run demonstrably missed a scenario; record why.
 - Preserve each gate's JSON result. It records verifier, requested and observed model,
   effort, prompt hash, duration, exit status, response, report validation, and whether
   the reported verdict passed. A structurally complete `FAIL`/`PARTIAL` exits 4.

@@ -26,6 +26,9 @@ EXIT_FAILED = 1
 EXIT_USAGE = 2
 EXIT_UNAVAILABLE = 3
 EXIT_GATE_CLOSED = 4
+# Effort is not pinned by the runner: the 2026-10 replay benchmark found no recall difference
+# between low and medium on the reviewer brief, and the provider tunes each model's default.
+PROVIDER_DEFAULT_EFFORT = "default"
 EXIT_TIMEOUT = 124
 SUPPORTED_PROVIDERS = ("claude", "codex")
 FORBIDDEN_SHELL_FRAGMENTS = (
@@ -176,109 +179,65 @@ def read_prompt(args: argparse.Namespace) -> str:
 
 
 def wrap_prompt(gate: str, prompt: str) -> str:
-    # The first line is the role-handshake marker. A verifier that has its own copy
-    # of this skill installed would otherwise keyword-match the request and re-enter
-    # the loop as an author (recruiting yet another verifier). The marker plus the
-    # guard section in SKILL.md disambiguates the role deterministically.
-    # The verifier's brief (audit the frame, not just the author's list) and the
-    # grounding guard are adapted from PR #3 by Ching (ChingYu2014).
+    # The first line is the role-handshake marker (see SKILL.md Role guard). The reviewer
+    # brief is a report contract: it says what the report IS, so the reviewer spends its
+    # budget on concrete failure scenarios instead of certifying the author's evidence.
+    # Earlier brief elements (frame audit, grounding guard) are adapted from PR #3 by Ching.
+    subject = "plan" if gate == "plan" else "change"
     return f"""<<verified-delivery-gate: {gate}>>
-You are the independent VERIFIER for the {gate} gate of someone else's verified-delivery
-run. You are not the author: do not invoke any locally installed verified-delivery
-skill, do not run the delivery loop, and do not recruit another verifier. Work alone.
-Stay read-only.
+You are the independent REVIEWER of someone else's {subject}. You are not the author: do
+not invoke any locally installed verified-delivery skill, do not run a delivery loop, and
+do not recruit another reviewer. Work alone and stay read-only.
 
-Grounding guard: before any analysis, print a one-line fingerprint for each source you
-read. For a git repo, use permitted reads of `.git/config`, `.git/HEAD`, and the
-resolved ref, or exact git commands only when command execution is available and
-approved. For a database/dataset, use its resolved connection and table. If a
-fingerprint cannot be obtained with the allowed tools, state UNAVAILABLE and keep the
-claim uncertain; never invent it or claim a match. If the request names expected
-fingerprints and any observed value differs, STOP and report MISMATCH instead of
-analysing. Disambiguate look-alike paths by fingerprint, never by directory name.
+Your value is what a different model sees that the author missed. Find the concrete ways
+this {subject} will hurt users, data, or the running system. Do not re-certify what the
+author already proved, and do not grade the author's paperwork.
 
-Audit the frame, not just the author's list — the author drew the frame you look
-through, so their blind spots are in it:
-- Restate the original problem in one line, then judge whether the plan/diff solves
-  THAT problem, not merely whether it does what it claims. Flag a wrong-shape
-  approach; do not redesign it.
-- State the invariants the source of truth implies; flag changes that are correct
-  line-by-line but break one in composition.
-- Attack the most fragile assumption first — you run under a hard time cap.
-- Name band-aids: anything masking a deeper issue, even when it matches the source
-  of truth line-for-line.
-- Judge claims against the named source of truth and current files, not plausibility;
-  mark each finding grounded-signal vs unverified-assumption. Keep missing evidence
-  as uncertainty.
-- Finish with an open sweep: anything wrong the author did not ask about.
-Stay strict regardless of how confident or polished the request reads; do not anchor
-on the author's framing.
+How to work:
+- Restate the original problem in one line and judge whether the approach solves THAT
+  problem. Flag a wrong-shape approach; do not redesign it.
+- Attack the most fragile assumption first: ordering, concurrency, stale async callbacks,
+  retries, partial failure, rollback, locks, permissions, shared state, irreversible steps,
+  and behaviour that is correct line-by-line but breaks an invariant in composition.
+- Read what the request routes you to first. Stop collecting evidence for a claim once it
+  is supported or refuted. After about 20 evidence tool calls, start writing.
+- Identity: the request's fingerprints come from the author's tooling. If something you
+  read contradicts one, check whether the content under review itself differs. If it does
+  not, record a PROTOCOL NOTE and continue; review the content you can read.
+- For a plan, files/tests the plan proposes to create are expected to be absent.
+- For a change, a candidate-caused failing deterministic test is BLOCKING; run portable
+  commands the request provides when you can. Test evidence describes only the candidate
+  it ran against: if the reviewed content differs from it, judge the content yourself.
 
-Convergence guard: correctness comes from decisive evidence, not unlimited reading.
-- Use the request's source routing, identifiers, and cited ranges first. Prefer
-  targeted Read/Grep calls over reading whole large files, logs, or JSON artifacts.
-- Stop collecting evidence for a scoped claim once it is supported or refuted by
-  enough independent evidence to classify it. Do not keep reading for optional polish.
-- Treat roughly 20 evidence tool calls as a synthesis checkpoint, not a correctness
-  cap. At that point, reserve the remaining time for the complete report and inspect
-  only evidence that could still change a material verdict.
-- If a material point remains unresolved when synthesis must begin, report it as
-  PARTIAL with the missing evidence. Never spend the final-report budget chasing
-  certainty until the hard timeout, and never omit the report envelope.
-
-Classify every finding as BLOCKING or NON-BLOCKING:
-- BLOCKING means a scoped acceptance criterion or source-of-truth invariant is
-  violated, a deterministic check fails because of this candidate, or missing
-  evidence could realistically change the correctness verdict.
-- NON-BLOCKING means hardening, maintainability, polish, or a follow-up outside the
-  accepted scope. PASS may include non-blocking findings. Do not turn optional
-  improvement into PARTIAL, and surface all blocking findings you can discover in
-  this pass instead of drip-feeding them across reruns.
-
-Citation precision is BLOCKING only when the evidence cannot be located uniquely or
-the ambiguity could change the material verdict. If the request's identifier, routed
-file, and cited range already identify the relevant behavior, treat a request for a
-narrower line range as NON-BLOCKING and audit the behavior itself.
-
-For a plan gate, judge the proposed specification, integration points, and planned
-proof. A planned new file, test, helper, or copy key is expected to be absent before
-implementation; absence is not a defect. It is BLOCKING only when the plan fails to
-say what must be created, where it integrates, or how the acceptance criterion will
-be proved.
-
-For a result gate, apply an evidence-freshness guard. Deterministic test/build evidence
-supports only the exact candidate fingerprint it was run against. Check every named
-repo's HEAD and staged/unstaged/untracked state, plus any supplied diff/artifact hashes.
-If source or contract inputs changed after the cited evidence, or one repo in a
-multi-repo delivery was omitted, mark the affected claim PARTIAL. Do not infer freshness
-from a passing command that ran against an unidentified candidate.
-
-For a result gate, also apply an evidence-domain guard. Classify each requested check as
-portable, target-host, external-readonly, or privileged-live. Reproduce portable checks
-when an exact approved command is available. For target-host/device/live evidence,
-verify the candidate binding, artifact identity, and relevant source without pretending
-a sandbox skip is a pass. A command failure is candidate-caused only when grounded
-evidence attributes it to the candidate; sandbox or capability failure is an environment
-mismatch, and unresolved attribution remains unknown. Report each command's domain,
-EXECUTED_PASS/EXECUTED_FAIL/UNAVAILABLE status, and candidate/environment/unknown scope.
-When the gate spans domains, enforce dual proof: rerun all applicable portable checks
-and separately audit fresh candidate-bound target-host/external/live evidence. Neither
-half replaces the other.
-
-For every requested check, report TRUE, FALSE, or PARTIAL with reasoning and a file:line,
-table:column, contract-section, or exact-query citation.
-End with an explicit overall verdict: PASS, FAIL, or PARTIAL. Be concise.
+Write the report in this order:
+1. Problem — one line.
+2. BLOCKING — every blocking finding you can discover in this pass, highest risk first.
+   Each has four labelled parts:
+   Scenario: the concrete trigger and sequence of events.
+   Harm: the observable wrong outcome for a user, data, or the system.
+   Where: file:line, table/column, or the exact query/contract section.
+   Check: the smallest test, query, or repro that would demonstrate it.
+   A finding is BLOCKING only if you can write all four parts.
+3. NON-BLOCKING — one line each: hardening, polish, follow-ups, and risks you could not
+   turn into a concrete scenario.
+4. PROTOCOL NOTES — one line each: evidence format, fingerprints, provenance, citation
+   precision, missing artifacts that cannot change a user-visible outcome. Protocol notes
+   never make the verdict FAIL or PARTIAL.
+5. Rubric — only if the request asks for one: a compact table, one line per item.
+Then the verdict: PASS when there are no BLOCKING findings; FAIL when there is at least
+one; PARTIAL only when something required to decide whether a concrete blocking scenario
+exists could not be inspected (name it exactly).
 
 <verification_request>
 {prompt.rstrip()}
 </verification_request>
 
-Your final response is the audit artifact. Put the COMPLETE report in the final
+Your final response is the review artifact. Put the COMPLETE report in the final
 response; do not call ExitPlanMode, do not put findings in a plan transition or
 another tool, and do not refer to content as being "above". The runner fails closed
 if the report envelope or explicit verdict is missing.
 
-Use this exact envelope, with every finding and citation inside it:
+Use this exact envelope, with every finding inside it:
 {REPORT_START}
 [complete report]
 OVERALL VERDICT: PASS|FAIL|PARTIAL
@@ -421,8 +380,7 @@ def claude_command(
         "--safe-mode",
         "--model",
         model,
-        "--effort",
-        effort,
+        *(("--effort", effort) if effort != PROVIDER_DEFAULT_EFFORT else ()),
     ]
     if not shell_commands:
         command.extend(
@@ -511,9 +469,9 @@ def codex_command(model: str | None, effort: str) -> list[str]:
         "--ignore-user-config",
         "--ignore-rules",
         "--json",
-        "-c",
-        f'model_reasoning_effort="{effort}"',
     ]
+    if effort != PROVIDER_DEFAULT_EFFORT:
+        command.extend(["-c", f'model_reasoning_effort="{effort}"'])
     if model:
         command.extend(["--model", model])
     command.append("-")
@@ -793,7 +751,9 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--output", default="-")
     ap.add_argument("--model", help="Override the selected verifier model")
     ap.add_argument(
-        "--effort", default=env_default("VERIFIED_DELIVERY_EFFORT", "xhigh")
+        "--effort",
+        default=env_default("VERIFIED_DELIVERY_EFFORT", PROVIDER_DEFAULT_EFFORT),
+        help="reasoning effort; 'default' (the default) passes none so the model's own default applies"
     )
     ap.add_argument(
         "--timeout",

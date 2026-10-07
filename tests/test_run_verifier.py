@@ -135,7 +135,8 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result["assurance"], "independent")
         self.assertEqual(result["actual_model"], "claude-opus-5")
         self.assertEqual(result["models_used"], ["claude-haiku-4-5", "claude-opus-5"])
-        self.assertEqual(result["requested_effort"], "xhigh")
+        self.assertEqual(result["requested_effort"], "default")
+        self.assertNotIn("--effort", invocation["argv"])
         self.assertIn("--safe-mode", invocation["argv"])
         self.assertIn("Read,Glob,Grep", invocation["argv"])
         permission_index = invocation["argv"].index("--permission-mode")
@@ -160,32 +161,21 @@ class RunnerTests(unittest.TestCase):
             "<<verified-delivery-report:start>>",
             invocation["stdin"],
         )
-        self.assertIn(
-            "Classify every finding as BLOCKING or NON-BLOCKING",
-            invocation["stdin"],
-        )
-        self.assertIn("evidence-freshness guard", invocation["stdin"])
-        self.assertIn("evidence-domain guard", invocation["stdin"])
-        self.assertIn("EXECUTED_PASS/EXECUTED_FAIL/UNAVAILABLE", invocation["stdin"])
-        self.assertIn("enforce dual proof", invocation["stdin"])
-        self.assertIn("multi-repo delivery was omitted", invocation["stdin"])
-        self.assertIn("Convergence guard", invocation["stdin"])
-        self.assertIn(
-            "roughly 20 evidence tool calls as a synthesis checkpoint",
-            invocation["stdin"],
-        )
-        self.assertIn(
-            "Never spend the final-report budget chasing",
-            invocation["stdin"],
-        )
-        self.assertIn(
-            "Citation precision is BLOCKING only",
-            invocation["stdin"],
-        )
-        self.assertIn(
-            "A planned new file, test, helper, or copy key",
-            invocation["stdin"],
-        )
+        for contract in (
+            "Scenario:",
+            "Harm:",
+            "Where:",
+            "Check:",
+            "A finding is BLOCKING only if you can write all four parts",
+            "PROTOCOL NOTES",
+            "never make the verdict FAIL or PARTIAL",
+            "check whether the content under review itself differs",
+            "files/tests the plan proposes to create are expected to be absent",
+            "After about 20 evidence tool calls, start writing",
+            "candidate-caused failing deterministic test is BLOCKING",
+        ):
+            self.assertIn(contract, invocation["stdin"])
+        self.assertNotIn("STOP and report MISMATCH", invocation["stdin"])
 
     @unittest.skipUnless(sys.platform == "darwin", "macOS caffeinate only")
     def test_macos_runner_owns_sleep_prevention_by_default(self) -> None:
@@ -640,8 +630,22 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("--ephemeral", invocation["argv"])
         self.assertIn("--ignore-user-config", invocation["argv"])
         self.assertIn("--ignore-rules", invocation["argv"])
-        self.assertIn('model_reasoning_effort="xhigh"', invocation["argv"])
+        self.assertFalse(
+            any("model_reasoning_effort" in part for part in invocation["argv"])
+        )
         self.assertFalse(invocation["has_codex_thread_id"])
+
+    def test_explicit_effort_is_passed_to_each_provider(self) -> None:
+        completed = self.run_runner("claude-code", "--effort", "medium")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(self.result()["requested_effort"], "medium")
+        self.assertIn('model_reasoning_effort="medium"', self.invocation()["argv"])
+
+        completed = self.run_runner("codex", "--effort", "high")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        argv = self.invocation()["argv"]
+        effort_index = argv.index("--effort")
+        self.assertEqual(argv[effort_index + 1], "high")
 
     def test_codex_config_model_is_recorded_and_pinned_for_clean_run(self) -> None:
         codex_home = self.base / "codex-home"

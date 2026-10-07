@@ -8,7 +8,7 @@ Codex.
 ```text
 CLI: codex exec
 Model: configured Codex default, unless explicitly overridden
-Reasoning effort: xhigh
+Reasoning effort: model default (pass --effort to override)
 Sandbox: read-only
 Session persistence: ephemeral
 User config and rules: ignored after resolving the model
@@ -61,7 +61,7 @@ The runner constructs the equivalent of:
 ```bash
 env -u CODEX_THREAD_ID codex exec --sandbox read-only \
   --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules --json \
-  -c 'model_reasoning_effort="xhigh"' -
+  -
 ```
 
 The runner adds `--model <resolved-config-id>` when available. The prompt is supplied

@@ -7,7 +7,7 @@ Use this adapter when the author is Codex or when the user explicitly selects Cl
 ```text
 CLI: claude -p
 Model: claude-opus-5
-Effort: xhigh
+Effort: model default (pass --effort to override)
 Permission mode: dontAsk
 Tools: Read, Glob, Grep
 Session persistence: disabled
@@ -105,7 +105,7 @@ The runner constructs the equivalent of:
 
 ```bash
 env -u CLAUDECODE claude -p --safe-mode \
-  --model claude-opus-5 --effort xhigh \
+  --model claude-opus-5 \
   --permission-mode dontAsk --tools Read,Glob,Grep \
   --no-session-persistence --output-format json
 ```

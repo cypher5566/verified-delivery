@@ -29,9 +29,9 @@ independent verification.
 
 ## Model policy
 
-- Claude defaults to the versioned `claude-opus-5` model at `xhigh` effort.
+- Claude defaults to the versioned `claude-opus-5` model at the model's own default effort.
 - Codex resolves the user's configured model and pins it for a clean invocation at
-  `xhigh` reasoning effort because Codex model identifiers change independently of this skill. Set
+  the model's own default reasoning effort because Codex model identifiers change independently of this skill. Set
   `VERIFIED_DELIVERY_CODEX_MODEL` or pass `--model` when a versioned identifier is
   required for auditability.
 - The runner reads only the top-level `model` field from Codex `config.toml` for
@@ -49,7 +49,7 @@ VERIFIED_DELIVERY_VERIFIER=auto|claude|codex
 VERIFIED_DELIVERY_CLAUDE_MODEL=claude-opus-5
 VERIFIED_DELIVERY_CODEX_MODEL=<optional model id>
 VERIFIED_DELIVERY_OTHER_VERIFIER=codex|claude
-VERIFIED_DELIVERY_EFFORT=xhigh
+VERIFIED_DELIVERY_EFFORT=default   # 'default' passes no effort flag; or low|medium|high|xhigh
 VERIFIED_DELIVERY_TIMEOUT=600
 ```
 
@@ -66,12 +66,12 @@ Every gate prompt should name:
 5. deterministic test evidence;
 6. any applicable `docs/RUBRIC.md` axes.
 
-Ask for a per-item `TRUE`, `FALSE`, or `PARTIAL` verdict, reasoning, and citations.
-Missing evidence must remain uncertainty rather than being guessed into a pass.
+State the tier and the risks to challenge; the runner's brief defines the report shape
+(BLOCKING scenarios with trigger, harm, location, and check; NON-BLOCKING; PROTOCOL
+NOTES). Missing evidence must remain uncertainty rather than being guessed into a pass.
 For a result gate, include every repo's frozen candidate fingerprint and bind the
-test/build evidence to it. Require findings to be classified `BLOCKING` or
-`NON-BLOCKING`; PASS may contain non-blocking follow-ups, while PARTIAL is reserved for
-material uncertainty.
+test/build evidence to it. Protocol notes never block; PASS may contain non-blocking follow-ups, while PARTIAL is
+reserved for something that could not be inspected and could hide a blocking scenario.
 
 For a Plan Gate, evaluate the proposed behavior, integration points, and planned proof.
 A new file, test, helper, or copy key described by the plan is expected to be absent
